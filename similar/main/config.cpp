@@ -74,6 +74,7 @@ Cfg GameCfg;
 #define ResolutionYStr "ResolutionY"
 #define AspectXStr "AspectX"
 #define AspectYStr "AspectY"
+#define FOVStr "FOV"
 #define WindowModeStr "WindowMode"
 #define TexFiltStr "TexFilt"
 #define TexAnisStr "TexAnisotropy"
@@ -127,6 +128,7 @@ int ReadConfigFile()
 	GameCfg.ResolutionY = 480;
 	GameCfg.AspectX = 3;
 	GameCfg.AspectY = 4;
+	GameCfg.FOV = 90;
 	CGameCfg.WindowMode = false;
 	CGameCfg.TexFilt = 0;
 	CGameCfg.TexAnisotropy = 0;
@@ -201,6 +203,8 @@ int ReadConfigFile()
 			convert_integer(GameCfg.AspectX, value);
 		else if (cmp(lb, eq, AspectYStr))
 			convert_integer(GameCfg.AspectY, value);
+		else if (cmp(lb, eq, FOVStr))
+			convert_integer(GameCfg.FOV, value);
 		else if (cmp(lb, eq, WindowModeStr))
 			convert_integer(CGameCfg.WindowMode, value);
 		else if (cmp(lb, eq, TexFiltStr))
@@ -264,6 +268,7 @@ int WriteConfigFile()
 	PHYSFSX_printf(infile, "%s=%i\n", ResolutionYStr, SM_H(Game_screen_mode));
 	PHYSFSX_printf(infile, "%s=%i\n", AspectXStr, GameCfg.AspectX);
 	PHYSFSX_printf(infile, "%s=%i\n", AspectYStr, GameCfg.AspectY);
+	PHYSFSX_printf(infile, "%s=%i\n", FOVStr, GameCfg.FOV);
 	PHYSFSX_printf(infile, "%s=%i\n", WindowModeStr, CGameCfg.WindowMode);
 	PHYSFSX_printf(infile, "%s=%i\n", TexFiltStr, CGameCfg.TexFilt);
 	PHYSFSX_printf(infile, "%s=%i\n", TexAnisStr, CGameCfg.TexAnisotropy);

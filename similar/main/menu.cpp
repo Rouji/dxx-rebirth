@@ -1565,6 +1565,7 @@ void hud_config()
 	DXX_MENUITEM(VERB, MENU, "Screen resolution...", opt_gr_screenres)	\
 	DXX_MENUITEM(VERB, MENU, "HUD Options...", opt_gr_hudmenu)	\
 	DXX_MENUITEM(VERB, SLIDER, TXT_BRIGHTNESS, opt_gr_brightness, gr_palette_get_gamma(), 0, 16)	\
+	DXX_MENUITEM(VERB, SLIDER, "Field of View", opt_gr_fov, (GameCfg.FOV - 80) / 5, 0, 16)	\
 	DXX_MENUITEM(VERB, TEXT, "", blank1)	\
 	DXX_OGL0_GRAPHICS_MENU(VERB)	\
 	DXX_OGL1_GRAPHICS_MENU(VERB)	\
@@ -1674,6 +1675,7 @@ void graphics_config()
 #endif
 	GameCfg.GammaLevel = m[opt_gr_brightness].value;
 	CGameCfg.FPSIndicator = m[opt_gr_fpsindi].value;
+	GameCfg.FOV = 80 + m[opt_gr_fov].value * 5;
 #if DXX_USE_OGL
 	gr_set_attributes();
 	gr_set_mode(Game_screen_mode);

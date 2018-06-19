@@ -65,6 +65,7 @@ struct Cfg : prohibit_void_ptr<Cfg>
 	int ResolutionY;
 	int AspectX;
 	int AspectY;
+    int FOV;
 	uint8_t DigiVolume;
 	uint8_t MusicVolume;
 	bool ReverseStereo;
