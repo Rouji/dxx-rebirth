@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -153,19 +153,24 @@ static void mixdigi_convert_sound(int i)
 
 	if (data)
 	{
-#if MIX_DIGI_DEBUG
-		con_printf(CON_DEBUG, "converting %d (%d)", i, dlen);
-#endif
-		SDL_BuildAudioCVT(&cvt, AUDIO_U8, 1, freq, out_format, out_channels, out_freq);
+		if (SDL_BuildAudioCVT(&cvt, AUDIO_U8, 1, freq, out_format, out_channels, out_freq) == -1)
+		{
+			con_printf(CON_URGENT, "%s:%u: SDL_BuildAudioCVT failed: sound=%i dlen=%u freq=%i out_format=%i out_channels=%i out_freq=%i", __FILE__, __LINE__, i, dlen, freq, out_format, out_channels, out_freq);
+			return;
+		}
 
 		auto cvtbuf = make_unique<Uint8[]>(dlen * cvt.len_mult);
 		cvt.buf = cvtbuf.get();
 		cvt.len = dlen;
 		memcpy(cvt.buf, data, dlen);
-		if (SDL_ConvertAudio(&cvt)) con_printf(CON_DEBUG,"conversion of %d failed", i);
+		if (SDL_ConvertAudio(&cvt))
+		{
+			con_printf(CON_URGENT, "%s:%u: SDL_ConvertAudio failed: sound=%i dlen=%u freq=%i out_format=%i out_channels=%i out_freq=%i", __FILE__, __LINE__, i, dlen, freq, out_format, out_channels, out_freq);
+			return;
+		}
 
 		SoundChunks[i].abuf = cvtbuf.release();
-		SoundChunks[i].alen = dlen * cvt.len_mult;
+		SoundChunks[i].alen = cvt.len_cvt;
 		SoundChunks[i].allocated = 1;
 		SoundChunks[i].volume = 128; // Max volume = 128
 	}

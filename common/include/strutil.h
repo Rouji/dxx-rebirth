@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -12,6 +12,7 @@
 #include <cstring>
 #include "dxxsconf.h"
 #include "dsx-ns.h"
+#include "compiler-array.h"
 #include <vector>
 
 namespace dcx {
@@ -56,7 +57,7 @@ struct splitpath_t
 };
 
 // remove extension from filename, doesn't work with paths.
-void removeext(const char *filename, char *out);
+void removeext(const char *filename, array<char, 20> &out);
 
 //give a filename a new extension, doesn't work with paths with no extension already there
 extern void change_filename_extension( char *dest, const char *src, const char *new_ext );

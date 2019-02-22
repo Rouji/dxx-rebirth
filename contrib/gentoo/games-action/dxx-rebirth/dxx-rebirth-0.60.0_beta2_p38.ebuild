@@ -15,8 +15,10 @@ if [[ "$PV" = 9999 ]]; then
 	inherit git-r3
 	EGIT_REPO_URI="https://github.com/dxx-rebirth/dxx-rebirth"
 else
-	MY_PV="${PV/_beta/-beta}"
-	SRC_URI="https://github.com/dxx-rebirth/dxx-rebirth/archive/$MY_PV.zip -> $PN-$PVR.zip"
+	MY_COMMIT='00894792eb225a611ca5fd4b10156d959a0b51f9'
+	S="$WORKDIR/$PN-$MY_COMMIT"
+	SRC_URI="https://github.com/dxx-rebirth/dxx-rebirth/archive/$MY_COMMIT.zip -> $PN-$PVR.zip"
+	unset MY_COMMIT
 
 	# Restriction only for use in private overlays.  When this is added to a
 	# public tree, post the sources to a mirror and remove this restriction.
@@ -24,7 +26,7 @@ else
 fi
 
 DESCRIPTION="Descent Rebirth - enhanced Descent 1 & 2 engine"
-HOMEPAGE="http://www.dxx-rebirth.com/"
+HOMEPAGE="https://www.dxx-rebirth.com/"
 
 LICENSE="DXX-Rebirth GPL-3"
 SLOT="0"

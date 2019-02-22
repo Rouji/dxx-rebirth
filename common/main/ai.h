@@ -26,6 +26,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #pragma once
 
 #include <cstddef>
+#include <utility>
 #include "dxxsconf.h"
 #include "dsx-ns.h"
 #include "fmtcheck.h"
@@ -40,6 +41,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 #include "countarray.h"
 #include "aistruct.h"
+#include "valptridx.h"
 #endif
 
 namespace dcx {
@@ -85,16 +87,10 @@ extern const boss_flags_t Boss_invulnerable_energy;   // Set byte if boss is inv
 extern const boss_flags_t Boss_invulnerable_matter;   // Set byte if boss is invulnerable to matter weapons.
 extern const boss_flags_t Boss_invulnerable_spot;     // Set byte if boss is invulnerable in all but a certain spot.  (Dot product fvec|vec_to_collision < BOSS_INVULNERABLE_DOT)
 extern segnum_t Believed_player_seg;
-extern object *Ai_last_missile_camera;
+extern const object *Ai_last_missile_camera;
 }
 #endif
 
-namespace dcx {
-struct boss_special_segment_array_t : public count_array_t<segnum_t, 100> {};
-struct boss_teleport_segment_array_t : public boss_special_segment_array_t {};
-struct boss_gate_segment_array_t : public boss_special_segment_array_t {};
-extern boss_teleport_segment_array_t Boss_teleport_segs;
-}
 namespace dsx {
 void create_awareness_event(vmobjptr_t objp, player_awareness_type_t type);         // object *objp can create awareness of player, amount based on "type"
 ai_mode ai_behavior_to_mode(ai_behavior behavior);
@@ -103,6 +99,17 @@ void init_ai_object(vmobjptridx_t objp, ai_behavior initial_mode, imsegidx_t hid
 }
 
 namespace dcx {
+
+struct d_level_shared_boss_state
+{
+	struct special_segment_array_t : public count_array_t<vcsegidx_t, 100> {};
+	struct gate_segment_array_t : public special_segment_array_t {};
+	struct teleport_segment_array_t : public special_segment_array_t {};
+	gate_segment_array_t Gate_segs;
+	teleport_segment_array_t Teleport_segs;
+};
+
+extern d_level_shared_boss_state LevelSharedBossState;
 extern fix64 Boss_cloak_start_time;
 extern fix64 Last_teleport_time;
 constexpr fix Boss_cloak_duration = F1_0*7;
@@ -112,7 +119,7 @@ extern vms_vector Believed_player_pos;
 }
 
 namespace dsx {
-void move_towards_segment_center(vmobjptr_t objp);
+void move_towards_segment_center(const d_level_shared_segment_state &, object_base &objp);
 imobjptridx_t gate_in_robot(int type, vmsegptridx_t segnum);
 void do_ai_frame(vmobjptridx_t objp);
 void do_ai_frame_all();
@@ -123,8 +130,8 @@ void create_path_to_station(vmobjptridx_t objp, int max_length);
 void ai_follow_path(vmobjptridx_t objp, int player_visibility, const vms_vector *vec_to_player);
 void ai_turn_towards_vector(const vms_vector &vec_to_player, object_base &obj, fix rate);
 extern void init_ai_objects(void);
-void create_n_segment_path(vmobjptridx_t objp, int path_length, imsegidx_t avoid_seg);
-void create_n_segment_path_to_door(vmobjptridx_t objp, int path_length);
+void create_n_segment_path(vmobjptridx_t objp, unsigned path_length, imsegidx_t avoid_seg);
+void create_n_segment_path_to_door(vmobjptridx_t objp, unsigned path_length);
 }
 #endif
 namespace dcx {
@@ -140,14 +147,12 @@ static inline vms_vector make_random_vector()
 namespace dsx {
 void init_robots_for_level();
 #if defined(DXX_BUILD_DESCENT_II)
-void create_path_to_segment(vmobjptridx_t objp, segnum_t goalseg, int max_length, int safety_flag);
 int polish_path(vmobjptridx_t objp, point_seg *psegs, int num_points);
 void move_towards_player(vmobjptr_t objp, const vms_vector &vec_to_player);
 #endif
 
 // max_length is maximum depth of path to create.
 // If -1, use default: MAX_DEPTH_TO_SEARCH_FOR_PLAYER
-void create_path_to_player(vmobjptridx_t objp, int max_length, int safety_flag);
 void attempt_to_resume_path(vmobjptridx_t objp);
 
 // When a robot and a player collide, some robots attack!
@@ -157,7 +162,7 @@ int ai_door_is_openable(
 #if defined(DXX_BUILD_DESCENT_II)
 	player_flags,
 #endif
-	vcsegptr_t segp, int sidenum);
+	const shared_segment &segp, unsigned sidenum);
 int player_is_visible_from_object(vmobjptridx_t objp, vms_vector &pos, fix field_of_view, const vms_vector &vec_to_player);
 extern void ai_reset_all_paths(void);   // Reset all paths.  Call at the start of a level.
 int ai_multiplayer_awareness(vmobjptridx_t objp, int awareness_level);
@@ -289,13 +294,36 @@ static inline std::size_t operator-(point_seg_array_t::iterator i, point_seg_arr
 {
 	return std::distance(p.begin(), i);
 }
+
+enum class create_path_random_flag : uint8_t
+{
+	nonrandom,
+	random,
+};
+
+enum class create_path_safety_flag : uint8_t
+{
+	unsafe,
+	safe,
+};
+
+enum class create_path_result : uint8_t
+{
+	early,
+	finished,
+};
+
 }
 
 namespace dsx {
+
 #if defined(DXX_BUILD_DESCENT_II)
 extern fix64            Boss_hit_time;
+void create_path_to_segment(vmobjptridx_t objp, segnum_t goalseg, unsigned max_length, create_path_safety_flag safety_flag);
 #endif
-int create_path_points(vmobjptridx_t objp, segnum_t start_seg, segnum_t end_seg, point_seg_array_t::iterator point_segs, short *num_points, int max_depth, int random_flag, int safety_flag, imsegidx_t avoid_seg);
+
+void create_path_to_player(vmobjptridx_t objp, unsigned max_length, create_path_safety_flag safety_flag);
+std::pair<create_path_result, unsigned> create_path_points(vmobjptridx_t objp, vcsegidx_t start_seg, icsegidx_t end_seg, point_seg_array_t::iterator point_segs, unsigned max_depth, create_path_random_flag random_flag, create_path_safety_flag safety_flag, icsegidx_t avoid_seg);
 
 int ai_save_state(PHYSFS_File * fp);
 int ai_restore_state(PHYSFS_File *fp, int version, int swap);

@@ -281,7 +281,11 @@ int	GotoGameScreen()
 			// Always use the simple mission when playing level (for now at least)
 			create_new_mission();
 			Current_level_num = 1;
-			if (save_level("GAMESAVE.LVL"))
+			if (save_level(
+#if defined(DXX_BUILD_DESCENT_II)
+					LevelSharedSegmentState.DestructibleLights,
+#endif
+					"GAMESAVE.LVL"))
 				return 0;
 			editor_status("Level saved.\n");
 			break;
@@ -292,7 +296,7 @@ int	GotoGameScreen()
 				return 0;
 
 			const auto &&console = vmobjptr(get_local_player().objnum);
-			ConsoleObject = Viewer = console;
+			Viewer = ConsoleObject = console;
 			set_player_id(console, Player_num);
 			fly_init(*ConsoleObject);
 
@@ -558,6 +562,9 @@ static void move_player_2_segment_and_rotate(const vmsegptridx_t seg, const unsi
 {
         static int edgenum=0;
 
+	auto &LevelSharedVertexState = LevelSharedSegmentState.get_vertex_state();
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	compute_segment_center(vcvertptr, ConsoleObject->pos,seg);
 	auto vp = compute_center_point_on_side(vcvertptr, seg, side);
 	vm_vec_sub2(vp,ConsoleObject->pos);
@@ -588,8 +595,11 @@ int SetPlayerFromCursegMinusOne()
 	array<g3s_point, 4> corner_p;
 	fix max,view_dist=f1_0*10;
         static int edgenum=0;
-	const auto view_vec = vm_vec_negated(Cursegp->sides[Curside].normals[0]);
+	const auto view_vec = vm_vec_negated(Cursegp->shared_segment::sides[Curside].normals[0]);
 
+	auto &LevelSharedVertexState = LevelSharedSegmentState.get_vertex_state();
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	const auto &&side_center = compute_center_point_on_side(vcvertptr, Cursegp, Curside);
 	const auto view_vec2 = vm_vec_copy_scale(view_vec,view_dist);
 	vm_vec_sub(ConsoleObject->pos,side_center,view_vec2);
@@ -619,7 +629,7 @@ int SetPlayerFromCursegMinusOne()
 	//obj_relink(ConsoleObject-Objects, SEG_PTR_2_NUM(Cursegp) );
 	//update_object_seg(ConsoleObject);		//might have backed right out of curseg
 
-	auto newseg = find_point_seg(ConsoleObject->pos,Cursegp);
+	const auto &&newseg = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, ConsoleObject->pos, Cursegp);
 	if (newseg != segment_none)
 		obj_relink(vmobjptr, vmsegptr, vmobjptridx(ConsoleObject), newseg);
 
@@ -890,7 +900,7 @@ static void close_editor()
 {
 	//	_MARK_("end of editor");//Nuked to compile -KRB
 	
-#if !defined(__linux__) && !defined(__OpenBSD__)
+#if defined(WIN32) || defined(__APPLE__) || defined(__MACH__)
 	set_warn_func(msgbox_warning);
 #else
 	clear_warn_func();
@@ -937,11 +947,12 @@ static void close_editor()
 					break;
 
 				case editor_gamestate::saved:
-					state_restore_all_sub(PLAYER_DIRECTORY_STRING("gamesave.sge")
+					state_restore_all_sub(
 #if defined(DXX_BUILD_DESCENT_II)
-											   , secret_restore::none
+						LevelSharedSegmentState.DestructibleLights, secret_restore::none,
 #endif
-										  );
+						PLAYER_DIRECTORY_STRING("gamesave.sge")
+					);
 					break;
 
 				default:
@@ -996,11 +1007,12 @@ void gamestate_restore_check()
 			Save_position.orient = ConsoleObject->orient;
 			Save_position.segnum = ConsoleObject->segnum;
 
-			if (!state_restore_all_sub(PLAYER_DIRECTORY_STRING("gamesave.sge")
+			if (!state_restore_all_sub(
 #if defined(DXX_BUILD_DESCENT_II)
-								  , secret_restore::none
+					LevelSharedSegmentState.DestructibleLights, secret_restore::none,
 #endif
-								  ))
+					PLAYER_DIRECTORY_STRING("gamesave.sge")
+			))
 				return;
 
 			// Switch back to slew mode - loading saved game made ConsoleObject flying
@@ -1025,11 +1037,12 @@ int RestoreGameState()
 	if (!SafetyCheck())
 		return 0;
 
-	if (!state_restore_all_sub(PLAYER_DIRECTORY_STRING("gamesave.sge")
+	if (!state_restore_all_sub(
 #if defined(DXX_BUILD_DESCENT_II)
-						  , secret_restore::none
+			LevelSharedSegmentState.DestructibleLights, secret_restore::none,
 #endif
-						  ))
+			PLAYER_DIRECTORY_STRING("gamesave.sge")
+	))
 		return 0;
 
 	// Switch back to slew mode - loading saved game made ConsoleObject flying
@@ -1092,6 +1105,7 @@ window_event_result editor_handler(UI_DIALOG *, const d_event &event, unused_ui_
 			case EVENT_MOUSE_MOVED:
 				if (!keyd_pressed[ KEY_LCTRL ] && !keyd_pressed[ KEY_RCTRL ])
 					break;
+				//-fallthrough
 			case EVENT_JOYSTICK_BUTTON_UP:
 			case EVENT_JOYSTICK_BUTTON_DOWN:
 			case EVENT_JOYSTICK_MOVED:
@@ -1271,7 +1285,11 @@ window_event_result editor_handler(UI_DIALOG *, const d_event &event, unused_ui_
 			Cursegp = imsegptridx(Found_segs[0]);
 			med_create_new_segment_from_cursegp();
 			if (Lock_view_to_cursegp)
-				set_view_target_from_segment(Cursegp);
+			{
+				auto &Vertices = LevelSharedVertexState.get_vertices();
+				auto &vcvertptr = Vertices.vcptr;
+				set_view_target_from_segment(vcvertptr, Cursegp);
+			}
 		}
 
 		Update_flags |= UF_ED_STATE_CHANGED | UF_VIEWPOINT_MOVED;
@@ -1329,7 +1347,7 @@ window_event_result editor_handler(UI_DIALOG *, const d_event &event, unused_ui_
 					med_create_new_segment_from_cursegp();
 					editor_status("Texture assigned");
 				} else if (keyd_pressed[KEY_G])	{
-					tmap = Segments[seg].sides[side].tmap_num;
+					tmap = Segments[seg].unique_segment::sides[side].tmap_num;
 					texpage_grab_current(tmap);
 					editor_status( "Texture grabbed." );
 				} else if (keyd_pressed[ KEY_LAPOSTRO] ) {

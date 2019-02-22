@@ -76,34 +76,35 @@ struct trigger_dialog
 //-----------------------------------------------------------------
 // Adds a trigger to wall, and returns the trigger number. 
 // If there is a trigger already present, it returns the trigger number. (To be replaced)
-static trgnum_t add_trigger(const vmsegptr_t seg, short side)
+static trgnum_t add_trigger(trigger_array &Triggers, fvcvertptr &vcvertptr, wall_array &Walls, const shared_segment &seg, const unsigned side)
 {
-	trgnum_t trigger_num = Num_triggers;
+	trgnum_t trigger_num = Triggers.get_count();
 
 	Assert(trigger_num < MAX_TRIGGERS);
 	if (trigger_num>=MAX_TRIGGERS) return trigger_none;
 
-	auto wall_num = seg->sides[side].wall_num;
-	trgnum_t *wt;
+	auto wall_num = seg.sides[side].wall_num;
+	wall *wp;
+	auto &vmwallptr = Walls.vmptr;
 	if (wall_num == wall_none) {
-		wall_add_to_markedside(WALL_OPEN);
-		wall_num = seg->sides[side].wall_num;
-		wt = &vmwallptr(wall_num)->trigger;
+		wall_add_to_markedside(vcvertptr, Walls, WALL_OPEN);
+		wall_num = seg.sides[side].wall_num;
+		wp = vmwallptr(wall_num);
 		// Set default values first time trigger is added
 	} else {
 		auto &w = *vmwallptr(wall_num);
 		if (w.trigger != trigger_none)
 			return w.trigger;
 
+		wp = &w;
 		// Create new trigger.
-		wt = &w.trigger;
 	}
-	*wt = trigger_num;
-	const auto &&t = vmtrgptr(trigger_num);
-	t->flags = {};
-	t->value = F1_0*5;
-	t->num_links = 0;
-	t->flags &= TRIGGER_ON;
+	wp->trigger = trigger_num;
+	auto &t = *Triggers.vmptr(trigger_num);
+	t.flags = {};
+	t.value = F1_0*5;
+	t.num_links = 0;
+	t.flags &= TRIGGER_ON;
 	Triggers.set_count(trigger_num + 1);
 	return trigger_num;
 }		
@@ -124,15 +125,21 @@ static int trigger_flag_Markedside(const TRIGGER_FLAG flag, const int value)
 	if (!IS_CHILD(Markedsegp->children[Markedside])) return 0;
 
 	// If no wall just return
-	auto wall_num = Markedsegp->sides[Markedside].wall_num;
+	const auto wall_num = Markedsegp->shared_segment::sides[Markedside].wall_num;
 	if (!value && wall_num == wall_none) return 0;
-	const auto trigger_num = value ? add_trigger(Markedsegp, Markedside) : vcwallptr(wall_num)->trigger;
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	const auto trigger_num = value ? add_trigger(Triggers, vcvertptr, Walls, Markedsegp, Markedside) : vcwallptr(wall_num)->trigger;
 
 	if (trigger_num == trigger_none) {
 		editor_status(value ? "Cannot add trigger at Markedside." : "No trigger at Markedside.");
 		return 0;
 	}
 
+	auto &vmtrgptr = Triggers.vmptr;
 	auto &flags = vmtrgptr(trigger_num)->flags;
  	if (value)
 		flags |= flag;
@@ -149,11 +156,13 @@ static int bind_matcen_to_trigger() {
 		return 0;
 	}
 
-	auto wall_num = Markedsegp->sides[Markedside].wall_num;
+	const auto wall_num = Markedsegp->shared_segment::sides[Markedside].wall_num;
 	if (wall_num == wall_none) {
 		editor_status("No wall at Markedside.");
 		return 0;
 	}
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	const auto trigger_num = vcwallptr(wall_num)->trigger;
 	if (trigger_num == trigger_none) {
 		editor_status("No trigger at Markedside.");
@@ -166,6 +175,8 @@ static int bind_matcen_to_trigger() {
 		return 0;
 	}
 
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vmtrgptr = Triggers.vmptr;
 	const auto &&t = vmtrgptr(trigger_num);
 	const auto link_num = t->num_links;
 	for (int i=0;i<link_num;i++)
@@ -192,18 +203,21 @@ int bind_wall_to_trigger() {
 		return 0;
 	}
 
-	auto wall_num = Markedsegp->sides[Markedside].wall_num;
+	const auto wall_num = Markedsegp->shared_segment::sides[Markedside].wall_num;
 	if (wall_num == wall_none) {
 		editor_status("No wall at Markedside.");
 		return 0;
 	}
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	const auto trigger_num = vcwallptr(wall_num)->trigger;
 	if (trigger_num == trigger_none) {
 		editor_status("No trigger at Markedside.");
 		return 0;
 	}
 
-	if (Cursegp->sides[Curside].wall_num == wall_none) {
+	if (Cursegp->shared_segment::sides[Curside].wall_num == wall_none)
+	{
 		editor_status("No wall at Curside.");
 		return 0;
 	}
@@ -213,6 +227,8 @@ int bind_wall_to_trigger() {
 		return 0;
 	}
 
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vmtrgptr = Triggers.vmptr;
 	const auto &&t = vmtrgptr(trigger_num);
 	const auto link_num = t->num_links;
 	for (int i=0;i<link_num;i++)
@@ -236,10 +252,13 @@ int remove_trigger_num(int trigger_num)
 {
 	if (trigger_num != trigger_none)
 	{
-		auto r = partial_range(Triggers, static_cast<unsigned>(trigger_num), Num_triggers);
-		Triggers.set_count(Num_triggers - 1);
+		auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+		auto r = partial_range(Triggers, static_cast<unsigned>(trigger_num), Triggers.get_count());
+		Triggers.set_count(Triggers.get_count() - 1);
 		std::move(std::next(r.begin()), r.end(), r.begin());
 	
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
+		auto &vmwallptr = Walls.vmptr;
 		range_for (const auto &&w, vmwallptr)
 		{
 			auto &trigger = w->trigger;
@@ -256,14 +275,16 @@ int remove_trigger_num(int trigger_num)
 	return 0;
 }
 
-int remove_trigger(const vmsegptr_t seg, short side)
+unsigned remove_trigger(shared_segment &seg, const unsigned side)
 {    	
-	const auto wall_num = seg->sides[side].wall_num;
+	const auto wall_num = seg.sides[side].wall_num;
 	if (wall_num == wall_none)
 	{
 		return 0;
 	}
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	return remove_trigger_num(vcwallptr(wall_num)->trigger);
 }
 
@@ -276,6 +297,8 @@ static int trigger_remove()
 
 static int trigger_turn_all_ON()
 {
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vmtrgptr = Triggers.vmptr;
 	range_for (const auto t, vmtrgptr)
 		t->flags &= TRIGGER_ON;
 	return 1;
@@ -380,13 +403,17 @@ window_event_result trigger_dialog_handler(UI_DIALOG *dlg,const d_event &event, 
 	// If we change walls, we need to reset the ui code for all
 	// of the checkboxes that control the wall flags.  
 	//------------------------------------------------------------
-	const auto Markedwall = Markedsegp->sides[Markedside].wall_num;
+	const auto Markedwall = Markedsegp->shared_segment::sides[Markedside].wall_num;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	const auto trigger_num = (Markedwall != wall_none) ? vcwallptr(Markedwall)->trigger : trigger_none;
 
 	if (t->old_trigger_num != trigger_num)
 	{
 		if (trigger_num != trigger_none)
 		{
+			auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+			auto &vctrgptr = Triggers.vcptr;
 			const auto &&trig = vctrgptr(trigger_num);
 
   			ui_checkbox_check(t->triggerFlag[0].get(), trig->flags & TRIGGER_CONTROL_DOORS);
@@ -445,15 +472,21 @@ window_event_result trigger_dialog_handler(UI_DIALOG *dlg,const d_event &event, 
 		gr_set_current_canvas( t->wallViewBox->canvas );
 		auto &canvas = *grd_curcanv;
 
-		if (Markedsegp->sides[Markedside].wall_num == wall_none || vcwallptr(Markedsegp->sides[Markedside].wall_num)->trigger == trigger_none)
+		const auto wall_num = Markedsegp->shared_segment::sides[Markedside].wall_num;
+		if (wall_num == wall_none || vcwallptr(wall_num)->trigger == trigger_none)
 			gr_clear_canvas(canvas, CBLACK);
 		else {
-			if (Markedsegp->sides[Markedside].tmap_num2 > 0)  {
-				gr_ubitmap(canvas, texmerge_get_cached_bitmap( Markedsegp->sides[Markedside].tmap_num, Markedsegp->sides[Markedside].tmap_num2));
+			auto &us = Markedsegp->unique_segment::sides[Markedside];
+			if (us.tmap_num2 > 0) 
+			{
+				gr_ubitmap(canvas, texmerge_get_cached_bitmap(us.tmap_num, us.tmap_num2));
 			} else {
-				if (Markedsegp->sides[Markedside].tmap_num > 0)	{
-					PIGGY_PAGE_IN(Textures[Markedsegp->sides[Markedside].tmap_num]);
-					gr_ubitmap(canvas, GameBitmaps[Textures[Markedsegp->sides[Markedside].tmap_num].index]);
+				const auto tmap_num = us.tmap_num;
+				if (tmap_num > 0)
+				{
+					auto &t = Textures[tmap_num];
+					PIGGY_PAGE_IN(t);
+					gr_ubitmap(canvas, GameBitmaps[t.index]);
 				} else
 					gr_clear_canvas(canvas, CGREY);
 			}
@@ -466,7 +499,8 @@ window_event_result trigger_dialog_handler(UI_DIALOG *dlg,const d_event &event, 
 	//------------------------------------------------------------
 	if (event.type == EVENT_UI_DIALOG_DRAW)
 	{
-		if ( Markedsegp->sides[Markedside].wall_num != wall_none )	{
+		if (Markedsegp->shared_segment::sides[Markedside].wall_num != wall_none)
+		{
 			ui_dprintf_at( MainWindow, 12, 6, "Trigger: %d    ", trigger_num);
 		}	else {
 			ui_dprintf_at( MainWindow, 12, 6, "Trigger: none ");

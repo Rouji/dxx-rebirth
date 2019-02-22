@@ -213,6 +213,8 @@ static void write_exit_text(fvcsegptridx &vcsegptridx, fvcwallptridx &vcwallptri
 
 	//	---------- Find exit triggers ----------
 	count=0;
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vctrgptridx = Triggers.vcptridx;
 	range_for (const auto &&t, vctrgptridx)
 	{
 		if (trigger_is_exit(t))
@@ -423,11 +425,13 @@ static void write_control_center_text(fvcsegptridx &vcsegptridx, PHYSFS_File *my
 // ----------------------------------------------------------------------------
 static void write_fuelcen_text(PHYSFS_File *my_file)
 {
+	auto &Station = LevelUniqueFuelcenterState.Station;
 	int	i;
 
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Fuel Center stuff: (Note: This means fuel, repair, materialize, control centers!)\n");
 
+	const auto Num_fuelcenters = LevelUniqueFuelcenterState.Num_fuelcenters;
 	for (i=0; i<Num_fuelcenters; i++) {
 		PHYSFSX_printf(my_file, "Fuelcenter %i: Type=%i (%s), segment = %3i\n", i, Station[i].Type, Special_names[Station[i].Type], Station[i].segnum);
 		if (Segments[Station[i].segnum].special != Station[i].Type)
@@ -480,6 +484,10 @@ static void write_matcen_text(PHYSFS_File *my_file)
 
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Materialization centers:\n");
+	auto &RobotCenters = LevelSharedRobotcenterState.RobotCenters;
+	auto &Station = LevelUniqueFuelcenterState.Station;
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vctrgptridx = Triggers.vcptridx;
 	for (i=0; i<Num_robot_centers; i++) {
 		int	trigger_count=0, fuelcen_num;
 
@@ -522,6 +530,9 @@ static void write_wall_text(fvcsegptridx &vcsegptridx, fvcwallptridx &vcwallptri
 
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Walls:\n");
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+#endif
 	range_for (auto &&wp, vcwallptridx)
 	{
 		auto &w = *wp;
@@ -532,15 +543,15 @@ static void write_wall_text(fvcsegptridx &vcsegptridx, fvcwallptridx &vcwallptri
 			w.segnum, w.sidenum, w.linked_wall, Wall_names[w.type], w.flags, w.hps >> 16, w.trigger, w.clip_num, w.keys, w.state);
 
 #if defined(DXX_BUILD_DESCENT_II)
-		if (w.trigger >= Num_triggers)
+		if (w.trigger >= Triggers.get_count())
 			PHYSFSX_printf(my_file, "Wall %03d points to invalid trigger %d\n",i,w.trigger);
 #endif
 
 		auto segnum = w.segnum;
 		sidenum = w.sidenum;
 
-		if (Segments[segnum].sides[sidenum].wall_num != wp)
-			err_printf(my_file, "Error: Wall %u points at segment %i, side %i, but that segment doesn't point back (it's wall_num = %hi)", i, segnum, sidenum, static_cast<int16_t>(Segments[segnum].sides[sidenum].wall_num));
+		if (Segments[segnum].shared_segment::sides[sidenum].wall_num != wp)
+			err_printf(my_file, "Error: Wall %u points at segment %i, side %i, but that segment doesn't point back (it's wall_num = %hi)", i, segnum, sidenum, static_cast<int16_t>(Segments[segnum].shared_segment::sides[sidenum].wall_num));
 	}
 
 	wall_flags = {};
@@ -548,7 +559,7 @@ static void write_wall_text(fvcsegptridx &vcsegptridx, fvcwallptridx &vcwallptri
 	range_for (const auto &&segp, vcsegptridx)
 	{
 		for (j=0; j<MAX_SIDES_PER_SEGMENT; j++) {
-			const auto sidep = &segp->sides[j];
+			const auto sidep = &segp->shared_segment::sides[j];
 			if (sidep->wall_num != wall_none)
 			{
 				if (wall_flags[sidep->wall_num])
@@ -594,12 +605,15 @@ static void write_trigger_text(PHYSFS_File *my_file)
 {
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Triggers:\n");
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vctrgptridx = Triggers.vcptridx;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	range_for (auto &&t, vctrgptridx)
 	{
 		const auto i = static_cast<trgnum_t>(t);
 #if defined(DXX_BUILD_DESCENT_I)
-		PHYSFSX_printf(my_file, "Trigger %03i: flags=%04x, value=%08x, time=%8x, linknum=%i, num_links=%i ", i, 
-                        t->flags, static_cast<unsigned>(t->value), 0, t->link_num, t->num_links);
+		PHYSFSX_printf(my_file, "Trigger %03i: flags=%04x, value=%08x, time=%8x, num_links=%i ", i, t->flags, static_cast<unsigned>(t->value), 0, t->num_links);
 #elif defined(DXX_BUILD_DESCENT_II)
 		PHYSFSX_printf(my_file, "Trigger %03i: type=%02x flags=%04x, value=%08x, time=%8x, num_links=%i ", i,
 			t->type, t->flags, t->value, 0, t->num_links);
@@ -616,7 +630,7 @@ static void write_trigger_text(PHYSFS_File *my_file)
 		else
 		{
 			const auto &&w = *wi;
-			PHYSFSX_printf(my_file, "Attached to seg:side = %i:%i, wall %hi\n", w->segnum, w->sidenum, static_cast<int16_t>(vcsegptr(w->segnum)->sides[w->sidenum].wall_num));
+			PHYSFSX_printf(my_file, "Attached to seg:side = %i:%i, wall %hi\n", w->segnum, w->sidenum, static_cast<int16_t>(vcsegptr(w->segnum)->shared_segment::sides[w->sidenum].wall_num));
 		}
 	}
 }
@@ -651,9 +665,15 @@ void write_game_text_file(const char *filename)
 
 	PHYSFSX_printf(my_file, "\nNumber of segments:   %4i\n", Highest_segment_index+1);
 	PHYSFSX_printf(my_file, "Number of objects:    %4i\n", Highest_object_index+1);
-	PHYSFSX_printf(my_file, "Number of walls:      %4i\n", Num_walls);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptridx = Walls.vcptridx;
+	PHYSFSX_printf(my_file, "Number of walls:      %4i\n", Walls.get_count());
+	auto &ActiveDoors = LevelUniqueWallSubsystemState.ActiveDoors;
 	PHYSFSX_printf(my_file, "Number of open doors: %4i\n", ActiveDoors.get_count());
-	PHYSFSX_printf(my_file, "Number of triggers:   %4i\n", Num_triggers);
+	{
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	PHYSFSX_printf(my_file, "Number of triggers:   %4i\n", Triggers.get_count());
+	}
 	PHYSFSX_printf(my_file, "Number of matcens:    %4i\n", Num_robot_centers);
 	PHYSFSX_printf(my_file, "\n");
 
@@ -726,11 +746,15 @@ static int Ignore_tmap_num2_error;
 
 // ----------------------------------------------------------------------------
 namespace dsx {
-static void determine_used_textures_level(int load_level_flag, int shareware_flag, int level_num, perm_tmap_buffer_type &tmap_buf, wall_buffer_type &wall_buf, level_tmap_buffer_type &level_tmap_buf, int max_tmap)
+#if defined(DXX_BUILD_DESCENT_I)
+#define determine_used_textures_level(LevelSharedDestructibleLightState,load_level_flag,shareware_flag,level_num,tmap_buf,wall_buffer_type,level_tmap_buf,max_tmap)	determine_used_textures_level(load_level_flag,shareware_flag,level_num,tmap_buf,wall_buffer_type,level_tmap_buf,max_tmap)
+#endif
+static void determine_used_textures_level(d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, int load_level_flag, int shareware_flag, int level_num, perm_tmap_buffer_type &tmap_buf, wall_buffer_type &wall_buf, level_tmap_buffer_type &level_tmap_buf, int max_tmap)
 {
 	int	sidenum;
 	int	j;
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
 #if defined(DXX_BUILD_DESCENT_I)
 	tmap_buf = {};
 
@@ -742,9 +766,10 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
          {
 		for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++)
                  {
-			const auto sidep = &segp->sides[sidenum];
-			if (sidep->wall_num != wall_none) {
-				int clip_num = Walls[sidep->wall_num].clip_num;
+			auto &sside = segp->shared_segment::sides[sidenum];
+			if (sside.wall_num != wall_none)
+			{
+				const auto clip_num = Walls.vcptr(sside.wall_num)->clip_num;
 				if (clip_num != -1) {
 
 					const auto num_frames = WallAnims[clip_num].num_frames;
@@ -762,13 +787,14 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 				}
 			}
 
-			if (sidep->tmap_num >= 0)
+			auto &uside = segp->unique_segment::sides[sidenum];
+			if (uside.tmap_num >= 0)
                          {
-				if (sidep->tmap_num < max_tmap)
+				if (uside.tmap_num < max_tmap)
                                  {
-					tmap_buf[sidep->tmap_num]++;
-					if (level_tmap_buf[sidep->tmap_num] == -1)
-						level_tmap_buf[sidep->tmap_num] = level_num + (!shareware_flag) * NUM_SHAREWARE_LEVELS;
+					tmap_buf[uside.tmap_num]++;
+					if (level_tmap_buf[uside.tmap_num] == -1)
+						level_tmap_buf[uside.tmap_num] = level_num + (!shareware_flag) * NUM_SHAREWARE_LEVELS;
                                  }
                                 else
                                  {
@@ -776,12 +802,12 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
                                  }
                          }
 
-			if ((sidep->tmap_num2 & 0x3fff) != 0)
+			if (const auto tmap_num2 = uside.tmap_num2 & 0x3fff)
                          {
-				if ((sidep->tmap_num2 & 0x3fff) < max_tmap) {
-					tmap_buf[sidep->tmap_num2 & 0x3fff]++;
-					if (level_tmap_buf[sidep->tmap_num2 & 0x3fff] == -1)
-						level_tmap_buf[sidep->tmap_num2 & 0x3fff] = level_num + (!shareware_flag) * NUM_SHAREWARE_LEVELS;
+				if (tmap_num2 < max_tmap) {
+					++tmap_buf[tmap_num2];
+					if (level_tmap_buf[tmap_num2] == -1)
+						level_tmap_buf[tmap_num2] = level_num + (!shareware_flag) * NUM_SHAREWARE_LEVELS;
 				} else
 					Int3();	//	Error, bogus texture map.  Should not be greater than max_tmap.
                          }
@@ -794,10 +820,10 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 	tmap_buf = {};
 
 	if (load_level_flag) {
-		load_level(Adam_level_names[level_num]);
+		load_level(LevelSharedDestructibleLightState, Adam_level_names[level_num]);
 	}
 
-
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	//	Process robots.
 	range_for (const auto &&objp, vcobjptr)
 	{
@@ -827,9 +853,10 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 	range_for (const auto &&segp, vmsegptr)
 	{
 		for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++) {
-			const auto sidep = &segp->sides[sidenum];
-			if (sidep->wall_num != wall_none) {
-				int clip_num = Walls[sidep->wall_num].clip_num;
+			auto &sside = segp->shared_segment::sides[sidenum];
+			auto &uside = segp->unique_segment::sides[sidenum];
+			if (sside.wall_num != wall_none) {
+				const auto clip_num = Walls.vcptr(sside.wall_num)->clip_num;
 				if (clip_num != -1) {
 
 					// -- int num_frames = WallAnims[clip_num].num_frames;
@@ -846,10 +873,10 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 				}
 			} else if (segp->children[sidenum] == segment_none) {
 
-				if (sidep->tmap_num >= 0)
+				if (uside.tmap_num >= 0)
 				{
-					if (sidep->tmap_num < Textures.size()) {
-						const auto ti = Textures[sidep->tmap_num].index;
+					if (uside.tmap_num < Textures.size()) {
+						const auto ti = Textures[uside.tmap_num].index;
 						assert(ti < tmap_buf.size());
 						++tmap_buf[ti];
 						if (level_tmap_buf[ti] == -1)
@@ -858,7 +885,7 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 						Int3();	//	Error, bogus texture map.  Should not be greater than max_tmap.
 				}
 
-				if (const auto masked_tmap_num2 = (sidep->tmap_num2 & 0x3fff))
+				if (const auto masked_tmap_num2 = (uside.tmap_num2 & 0x3fff))
 				{
 					if (masked_tmap_num2 < Textures.size())
 					{
@@ -871,7 +898,7 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 						if (!Ignore_tmap_num2_error)
 							Int3();	//	Error, bogus texture map.  Should not be greater than max_tmap.
 						Ignore_tmap_num2_error = 1;
-						sidep->tmap_num2 = 0;
+						uside.tmap_num2 = 0;
 					}
 				}
 			}
@@ -896,6 +923,8 @@ static void say_used_tmaps(PHYSFS_File *const my_file, const perm_tmap_buffer_ty
 #if defined(DXX_BUILD_DESCENT_I)
 	int	count = 0;
 
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	const auto Num_tmaps = LevelUniqueTmapInfoState.Num_tmaps;
 	for (i=0; i<Num_tmaps; i++)
 		if (tb[i]) {
 			PHYSFSX_printf(my_file, "[%3i %8s (%4i)] ", i, static_cast<const char *>(TmapInfo[i].filename), tb[i]);
@@ -907,7 +936,7 @@ static void say_used_tmaps(PHYSFS_File *const my_file, const perm_tmap_buffer_ty
 #elif defined(DXX_BUILD_DESCENT_II)
 	for (i = 0; i < tb.size(); ++i)
 		if (tb[i]) {
-			PHYSFSX_printf(my_file, "[%3i %8s (%4i)]\n", i, AllBitmaps[i].name, tb[i]);
+			PHYSFSX_printf(my_file, "[%3i %8s (%4i)]\n", i, AllBitmaps[i].name.data(), tb[i]);
 		}
 #endif
 }
@@ -920,6 +949,8 @@ static void say_used_once_tmaps(PHYSFS_File *const my_file, const perm_tmap_buff
 	int	i;
 	const char	*level_name;
 
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	const auto Num_tmaps = LevelUniqueTmapInfoState.Num_tmaps;
 	for (i=0; i<Num_tmaps; i++)
 		if (tb[i] == 1) {
 			int	level_num = tb_lnum[i];
@@ -944,7 +975,8 @@ static void say_unused_tmaps(PHYSFS_File *my_file, perm_tmap_buffer_type &tb)
 	int	count = 0;
 
 #if defined(DXX_BUILD_DESCENT_I)
-	const unsigned bound = Num_tmaps;
+	const unsigned bound = LevelUniqueTmapInfoState.Num_tmaps;
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 #elif defined(DXX_BUILD_DESCENT_II)
 	const unsigned bound = MAX_BITMAP_FILES;
 #endif
@@ -958,7 +990,7 @@ static void say_unused_tmaps(PHYSFS_File *my_file, perm_tmap_buffer_type &tb)
 #if defined(DXX_BUILD_DESCENT_I)
 			PHYSFSX_printf(my_file, "[%3i %8s] ", i, static_cast<const char *>(TmapInfo[i].filename));
 #elif defined(DXX_BUILD_DESCENT_II)
-			PHYSFSX_printf(my_file, "[%3i %8s] ", i, AllBitmaps[i].name);
+			PHYSFSX_printf(my_file, "[%3i %8s] ", i, AllBitmaps[i].name.data());
 #endif
 			if (count++ >= 4) {
 				PHYSFSX_printf(my_file, "\n");
@@ -1070,7 +1102,7 @@ static void say_totals_all(void)
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
 	for (i=First_dump_level; i<=Last_dump_level; i++) {
-		load_level(Adam_level_names[i]);
+		load_level(LevelSharedSegmentState.DestructibleLights, Adam_level_names[i]);
 		say_totals(vcobjptridx, my_file, Adam_level_names[i]);
 	}
 #endif
@@ -1085,7 +1117,7 @@ static void dump_used_textures_level(PHYSFS_File *my_file, int level_num)
 	level_tmap_buf.fill(-1);
 
 	wall_buffer_type temp_wall_buf;
-	determine_used_textures_level(0, 1, level_num, temp_tmap_buf, temp_wall_buf, level_tmap_buf, sizeof(level_tmap_buf)/sizeof(level_tmap_buf[0]));
+	determine_used_textures_level(LevelSharedSegmentState.DestructibleLights, 0, 1, level_num, temp_tmap_buf, temp_wall_buf, level_tmap_buf, sizeof(level_tmap_buf)/sizeof(level_tmap_buf[0]));
 	PHYSFSX_printf(my_file, "\nTextures used in [%s]\n", Gamesave_current_filename);
 	say_used_tmaps(my_file, temp_tmap_buf);
 }
@@ -1117,7 +1149,7 @@ say_totals_all();
 
 	for (i=0; i<NUM_SHAREWARE_LEVELS; i++) {
 		wall_buffer_type temp_wall_buf;
-		determine_used_textures_level(1, 1, i, temp_tmap_buf, temp_wall_buf, level_tmap_buf, sizeof(level_tmap_buf)/sizeof(level_tmap_buf[0]));
+		determine_used_textures_level(LevelSharedDestructibleLightState, 1, 1, i, temp_tmap_buf, temp_wall_buf, level_tmap_buf, sizeof(level_tmap_buf)/sizeof(level_tmap_buf[0]));
 		PHYSFSX_printf(my_file, "\nTextures used in [%s]\n", Shareware_level_names[i]);
 		say_used_tmaps(my_file, temp_tmap_buf);
 		merge_buffers(perm_tmap_buf, temp_tmap_buf);
@@ -1142,7 +1174,7 @@ say_totals_all();
 #endif
 	{
 		wall_buffer_type temp_wall_buf;
-		determine_used_textures_level(1, 0, i, temp_tmap_buf, temp_wall_buf, level_tmap_buf, sizeof(level_tmap_buf)/sizeof(level_tmap_buf[0]));
+		determine_used_textures_level(LevelSharedSegmentState.DestructibleLights, 1, 0, i, temp_tmap_buf, temp_wall_buf, level_tmap_buf, sizeof(level_tmap_buf)/sizeof(level_tmap_buf[0]));
 #if defined(DXX_BUILD_DESCENT_I)
 		PHYSFSX_printf(my_file, "\nTextures used in [%s]\n", Registered_level_names[i]);
 #elif defined(DXX_BUILD_DESCENT_II)

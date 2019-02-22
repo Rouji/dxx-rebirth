@@ -32,7 +32,7 @@ constexpr std::integral_constant<std::size_t, MAX_OBJECTS - 20> MAX_USED_OBJECTS
 #ifdef dsx
 namespace dsx {
 struct object;
-struct d_level_object_state;
+struct d_level_unique_object_state;
 }
 DXX_VALPTRIDX_DECLARE_SUBTYPE(dsx::, object, objnum_t, MAX_OBJECTS);
 
@@ -181,7 +181,7 @@ extern int Num_robot_types;
 #ifdef dsx
 namespace dsx {
 extern object *ConsoleObject;       // pointer to the object that is the player
-extern object *Viewer;              // which object we are seeing from
+extern const object *Viewer;              // which object we are seeing from
 extern object *Dead_player_camera;
 }
 #endif
@@ -232,14 +232,14 @@ void obj_unlink(fvmobjptr &vmobjptr, fvmsegptr &vmsegptr, object_base &obj);
 imobjptridx_t obj_create(object_type_t type, ubyte id, vmsegptridx_t segnum, const vms_vector &pos, const vms_matrix *orient, fix size, ubyte ctype, ubyte mtype, ubyte rtype);
 
 // make a copy of an object. returs num of new object
-imobjptridx_t obj_create_copy(const object &srcobj, const vms_vector &new_pos, vmsegptridx_t newsegnum);
+imobjptridx_t obj_create_copy(const object &srcobj, vmsegptridx_t newsegnum);
 
 // remove object from the world
-void obj_delete(vmobjptridx_t objnum);
+void obj_delete(d_level_unique_object_state &LevelUniqueObjectState, segment_array &Segments, vmobjptridx_t objnum);
 
 // called after load.  Takes number of objects, and objects should be
 // compressed
-void reset_objects(d_level_object_state &, unsigned n_objs);
+void reset_objects(d_level_unique_object_state &, unsigned n_objs);
 
 // make object array non-sparse
 void compress_objects();
@@ -263,14 +263,13 @@ void init_player_object();
 // segs.  if not any of these, returns false, else sets obj->segnum &
 // returns true callers should really use find_vector_intersection()
 // Note: this function is in gameseg.c
-int update_object_seg(vmobjptridx_t obj);
-
+int update_object_seg(fvmobjptr &vmobjptr, const d_level_shared_segment_state &LevelSharedSegmentState, d_level_unique_segment_state &LevelUniqueSegmentState, vmobjptridx_t obj);
 
 // Finds what segment *obj is in, returns segment number.  If not in
 // any segment, returns -1.  Note: This function is defined in
 // gameseg.h, but object.h depends on gameseg.h, and object.h is where
 // object is defined...get it?
-imsegptridx_t find_object_seg(vmobjptr_t obj);
+imsegptridx_t find_object_seg(const d_level_shared_segment_state &, d_level_unique_segment_state &, const object_base &obj);
 
 // go through all objects and make sure they have the correct segment
 // numbers used when debugging is on
@@ -289,8 +288,8 @@ void dead_player_end();
 // Extract information from an object (objp->orient, objp->pos,
 // objp->segnum), stuff in a shortpos structure.  See typedef
 // shortpos.
-void create_shortpos_little(shortpos *spp, vcobjptr_t objp);
-void create_shortpos_native(shortpos *spp, vcobjptr_t objp);
+void create_shortpos_little(const d_level_shared_segment_state &, shortpos &spp, const object_base &objp);
+void create_shortpos_native(const d_level_shared_segment_state &, shortpos &spp, const object_base &objp);
 
 // Extract information from a shortpos, stuff in objp->orient
 // (matrix), objp->pos, objp->segnum
@@ -311,13 +310,13 @@ object_signature_t obj_get_signature();
 // Generally, obj_create() should be called to get an object, since it
 // fills in important fields and does the linking.  returns -1 if no
 // free objects
-imobjptridx_t obj_allocate(d_level_object_state &);
+imobjptridx_t obj_allocate(d_level_unique_object_state &);
 
 // after calling init_object(), the network code has grabbed specific
 // object slots without allocating them.  Go though the objects &
 // build the free list, then set the apporpriate globals Don't call
 // this function if you don't know what you're doing.
-void special_reset_objects(d_level_object_state &);
+void special_reset_objects(d_level_unique_object_state &);
 
 // attaches an object, such as a fireball, to another object, such as
 // a robot
@@ -331,9 +330,9 @@ extern int Drop_afterburner_blob_flag;		//ugly hack
 // returns object number
 imobjptridx_t drop_marker_object(const vms_vector &pos, vmsegptridx_t segnum, const vms_matrix &orient, int marker_num);
 
-void wake_up_rendered_objects(vmobjptr_t gmissp, window_rendered_data &window);
+void wake_up_rendered_objects(const object &gmissp, window_rendered_data &window);
 
-void fuelcen_check_for_goal(vcsegptr_t);
+void fuelcen_check_for_goal(object &plrobj, const shared_segment &segp);
 #endif
 imobjptridx_t obj_find_first_of_type(int type);
 

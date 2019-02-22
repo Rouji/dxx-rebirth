@@ -198,6 +198,7 @@ static void info_display_segsize(grs_canvas &canvas, int show_all)
 //	---------------------------------------------------------------------------------------------------
 static void info_display_default(grs_canvas &canvas, int show_all)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	static int old_Num_segments = -1;
 	static int old_Num_vertices = -1;
 	static int old_Num_objects = -1;
@@ -225,23 +226,25 @@ static void info_display_default(grs_canvas &canvas, int show_all)
 
 	//--------------- Number of segments ----------------
 
-	if ( old_Num_segments != Num_segments )	{
-		old_Num_segments = Num_segments;
-		gr_uprintf(canvas, *canvas.cv_font, 0, 0, "Segments: %4d/%4" PRIuFAST32, Num_segments, static_cast<uint_fast32_t>(MAX_SEGMENTS));
+	if (old_Num_segments != LevelSharedSegmentState.Num_segments)
+	{
+		old_Num_segments = LevelSharedSegmentState.Num_segments;
+		gr_uprintf(canvas, *canvas.cv_font, 0, 0, "Segments: %4d/%4" PRIuFAST32, LevelSharedSegmentState.Num_segments, static_cast<uint_fast32_t>(MAX_SEGMENTS));
 	}
 
 	//---------------- Number of vertics -----------------
 	
-	if ( old_Num_vertices != Num_vertices )	{
-		old_Num_vertices = Num_vertices;
-		gr_uprintf(canvas, *canvas.cv_font, 0, 16, "Vertices: %4d/%4" PRIuFAST32, Num_vertices, static_cast<uint_fast32_t>(MAX_VERTICES));
+	if (old_Num_vertices != LevelSharedVertexState.Num_vertices)
+	{
+		old_Num_vertices = LevelSharedVertexState.Num_vertices;
+		gr_uprintf(canvas, *canvas.cv_font, 0, 16, "Vertices: %4d/%4" PRIuFAST32, LevelSharedVertexState.Num_vertices, static_cast<uint_fast32_t>(MAX_VERTICES));
 	}
 
 	//---------------- Number of objects -----------------
 	
-	if (old_Num_objects != ObjectState.num_objects)
+	if (old_Num_objects != LevelUniqueObjectState.num_objects)
 	{
-		const auto num_objects = ObjectState.num_objects;
+		const auto num_objects = LevelUniqueObjectState.num_objects;
 		old_Num_objects = num_objects;
 		gr_uprintf(canvas, *canvas.cv_font, 0, 32, "Objs: %3d/%3" DXX_PRI_size_type, num_objects, MAX_OBJECTS.value);
 	}
@@ -254,7 +257,9 @@ static void info_display_default(grs_canvas &canvas, int show_all)
 		old_Cursegp_num = Cursegp;
 		old_Curside = Curside;
 		gr_uprintf(canvas, *canvas.cv_font, 0, 48, "Cursegp/side: %3hu/%1d", static_cast<segnum_t>(Cursegp), Curside);
-		gr_uprintf(canvas, *canvas.cv_font, 0, 128, " tmap1,2,o: %3d/%3dx%1d", Cursegp->sides[Curside].tmap_num, Cursegp->sides[Curside].tmap_num2 & 0x3FFF, (Cursegp->sides[Curside].tmap_num2 >> 14) & 3);
+		unique_segment &useg = *Cursegp;
+		auto &uside = useg.sides[Curside];
+		gr_uprintf(canvas, *canvas.cv_font, 0, 128, " tmap1,2,o: %3d/%3dx%1d", uside.tmap_num, uside.tmap_num2 & 0x3FFF, (uside.tmap_num2 >> 14) & 3);
 	}
 
 	//--------------- Current_vertex_numbers -------------
@@ -270,17 +275,20 @@ static void info_display_default(grs_canvas &canvas, int show_all)
 
 	//--------------- Num walls/links/triggers -------------------------
 
-	if ( old_Num_walls != Num_walls ) {
-//		gr_uprintf(*grd_curcanv, 0, 96, "Walls/Links %d/%d", Num_walls, Num_links );
-		old_Num_walls = Num_walls;
-		gr_uprintf(canvas, *canvas.cv_font, 0, 96, "Walls %3d", Num_walls);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	if ( old_Num_walls != Walls.get_count() ) {
+		old_Num_walls = Walls.get_count();
+		gr_uprintf(canvas, *canvas.cv_font, 0, 96, "Walls %3d", Walls.get_count());
 	}
 
 	//--------------- Num triggers ----------------------
 
-	if ( old_Num_triggers != Num_triggers ) {
-		old_Num_triggers = Num_triggers;
-		gr_uprintf(canvas, *canvas.cv_font, 0, 112, "Num_triggers %2d", Num_triggers);
+	{
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	if ( old_Num_triggers != Triggers.get_count() ) {
+		old_Num_triggers = Triggers.get_count();
+		gr_uprintf(canvas, *canvas.cv_font, 0, 112, "Num_triggers %2d", Triggers.get_count());
+	}
 	}
 
 	//--------------- Current texture number -------------

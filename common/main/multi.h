@@ -96,7 +96,7 @@ extern int multi_protocol; // set and determinate used protocol
 #define MULTI_PROTO_UDP 1 // UDP protocol
 
 // What version of the multiplayer protocol is this? Increment each time something drastic changes in Multiplayer without the version number changes. Reset to 0 each time the version of the game changes
-#define MULTI_PROTO_VERSION	static_cast<uint16_t>(8)
+#define MULTI_PROTO_VERSION	static_cast<uint16_t>(9)
 // PROTOCOL VARIABLES AND DEFINES - END
 
 // limits for Packets (i.e. positional updates) per sec
@@ -456,7 +456,7 @@ void multi_send_flags(playernum_t);
 struct marker_message_text_t;
 void multi_send_drop_marker (int player,const vms_vector &position,char messagenum,const marker_message_text_t &text);
 void multi_send_markers();
-void multi_send_guided_info (vmobjptr_t miss,char);
+void multi_send_guided_info (const object_base &miss, char);
 void multi_send_orb_bonus(playernum_t pnum, uint8_t);
 void multi_send_got_orb(playernum_t pnum);
 void multi_send_effect_blowup(vcsegidx_t segnum, unsigned side, const vms_vector &pnt);
@@ -477,7 +477,7 @@ void multi_send_endlevel_packet();
 #ifdef dsx
 namespace dsx {
 void multi_send_hostage_door_status(vcwallptridx_t wallnum);
-void multi_prep_level_objects();
+void multi_prep_level_objects(const d_vclip_array &Vclip);
 void multi_prep_level_player();
 void multi_leave_game(void);
 }
@@ -615,6 +615,15 @@ struct packed_game_flags
 {
 	unsigned char value;
 };
+
+#if DXX_USE_TRACKER
+enum TrackerNATHolePunchWarn : uint8_t
+{
+	Unset,
+	UserEnabledHP,
+	UserRejectedHP,
+};
+#endif
 }
 
 namespace dsx {
@@ -649,7 +658,7 @@ static inline packed_game_flags pack_game_flags(const bit_game_flags *flags)
 	return p;
 }
 
-#define NETGAME_NAME_LEN                15
+constexpr std::size_t NETGAME_NAME_LEN = 25;
 
 extern struct netgame_info Netgame;
 }
@@ -695,7 +704,7 @@ void multi_send_drop_blobs(playernum_t);
 void multi_send_sound_function (char,char);
 void DropFlag();
 void multi_send_finish_game ();
-void init_hoard_data();
+void init_hoard_data(d_vclip_array &Vclip);
 void multi_apply_goal_textures();
 
 int HoardEquipped();
@@ -815,6 +824,7 @@ struct netgame_info : prohibit_void_ptr<netgame_info>, ignore_window_pointer_t
 	array<netplayer_info, MAX_PLAYERS> 				players;
 #if DXX_USE_TRACKER
 	ubyte						Tracker;
+	TrackerNATHolePunchWarn TrackerNATWarned;
 #endif
 };
 

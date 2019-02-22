@@ -220,9 +220,6 @@ array<ubyte, MAX_SEGMENTS> Automap_visited; // Segment visited list
 #define ZOOM_MIN_VALUE i2f(20*5)
 #define ZOOM_MAX_VALUE i2f(20*100)
 
-#define SLIDE_SPEED 			(350)
-#define ZOOM_SPEED_FACTOR		(500)	//(1500)
-#define ROT_SPEED_DIVISOR		(115000)
 
 // Function Prototypes
 namespace dsx {
@@ -233,26 +230,15 @@ static void automap_build_edge_list(automap *am, int add_all_edges);
 /* MAX_DROP_MULTI_* must be a power of 2 for LastMarkerDropped to work
  * properly.
  */
-#define	MAX_DROP_MULTI_COOP	4
+#define	MAX_DROP_MULTI_COOP	(Netgame.max_numplayers > 4 ? 2 : 4)
 #define	MAX_DROP_MULTI_COMPETITIVE	2
 #define	MAX_DROP_SINGLE	9
 
 #if defined(DXX_BUILD_DESCENT_II)
-#include "compiler-integer_sequence.h"
 
 namespace dsx {
 marker_message_text_t Marker_input;
 static float MarkerScale=2.0;
-
-template <std::size_t... N>
-static constexpr array<imobjidx_t, sizeof...(N)> init_MarkerObject(index_sequence<N...>)
-{
-	return {{((void)N, object_none)...}};
-}
-
-constexpr d_marker_object_numbers::d_marker_object_numbers() : imobjidx(init_MarkerObject(make_tree_index_sequence<NUM_MARKERS>()))
-{
-}
 
 d_marker_state MarkerState;
 
@@ -389,7 +375,7 @@ static void DropMarker(fvmobjptridx &vmobjptridx, fvmsegptridx &vmsegptridx, con
 
 	auto &marker_objidx = MarkerState.imobjidx[marker_num];
 	if (marker_objidx != object_none)
-		obj_delete(vmobjptridx(marker_objidx));
+		obj_delete(LevelUniqueObjectState, Segments, vmobjptridx(marker_objidx));
 
 	marker_objidx = drop_marker_object(plrobj.pos, vmsegptridx(plrobj.segnum), plrobj.orient, marker_num);
 
@@ -409,7 +395,7 @@ void DropBuddyMarker(const vmobjptr_t objp)
 
 	auto &marker_objidx = MarkerState.imobjidx[marker_num];
 	if (marker_objidx != object_none)
-		obj_delete(vmobjptridx(marker_objidx));
+		obj_delete(LevelUniqueObjectState, Segments, vmobjptridx(marker_objidx));
 
 	marker_objidx = drop_marker_object(objp->pos, vmsegptridx(objp->segnum), objp->orient, marker_num);
 }
@@ -567,6 +553,9 @@ static void name_frame(grs_canvas &canvas, automap *const am)
 
 static void automap_apply_input(automap *am, const vms_matrix &plrorient, const vms_vector &plrpos)
 {
+	constexpr int SLIDE_SPEED = 350;
+	constexpr int ZOOM_SPEED_FACTOR = 500;	//(1500)
+	constexpr int ROT_SPEED_DIVISOR = 115000;
 	if (PlayerCfg.AutomapFreeFlight)
 	{
 		if ( am->controls.state.fire_primary)
@@ -727,8 +716,9 @@ static void draw_automap(fvcobjptr &vcobjptr, automap *am)
 		for (unsigned i = 0; i < N_players; ++i)
 		{
 			if ( (i != Player_num) && ((Game_mode & GM_MULTI_COOP) || (get_team(Player_num) == get_team(i)) || (Netgame.game_flag.show_on_map)) )	{
-				const auto &&objp = vcobjptr(vcplayerptr(i)->objnum);
-				if (objp->type == OBJ_PLAYER)
+				auto &plr = *vcplayerptr(i);
+				auto &objp = *vcobjptr(plr.objnum);
+				if (objp.type == OBJ_PLAYER)
 				{
 					const auto &other_ship_rgb = player_rgb[get_player_or_team_color(i)];
 					draw_player(canvas, objp, BM_XRGB(other_ship_rgb.r, other_ship_rgb.g, other_ship_rgb.b));
@@ -924,7 +914,7 @@ static window_event_result automap_key_command(window *, const d_event &event, a
 					/* FIXME: this event should be sent to other players
 					 * so that they remove the marker.
 					 */
-					obj_delete(vmobjptridx(exchange(mo, object_none)));
+					obj_delete(LevelUniqueObjectState, Segments, vmobjptridx(exchange(mo, object_none)));
 					MarkerState.message[HighlightMarker] = {};
 					MarkerState.HighlightMarker = UINT8_MAX;
 				}
@@ -1048,7 +1038,7 @@ void do_automap()
 	am->segment_limit = 1;
 	am->num_edges = 0;
 	am->end_valid_edges = 0;
-	const auto max_edges = Num_segments * 12;
+	const auto max_edges = LevelSharedSegmentState.Num_segments * 12;
 	am->max_edges = max_edges;
 	am->edges = make_unique<Edge_info[]>(max_edges);
 	am->drawingListBright = make_unique<Edge_info *[]>(max_edges);
@@ -1138,6 +1128,8 @@ void draw_all_edges(grs_canvas &canvas, automap *const am)
 	fix distance;
 	fix min_distance = INT32_MAX;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	range_for (auto &i, unchecked_partial_range(am->edges.get(), am->end_valid_edges))
 	{
 		const auto e = &i;
@@ -1154,13 +1146,13 @@ void draw_all_edges(grs_canvas &canvas, automap *const am)
 		if (min_distance>distance )
 			min_distance = distance;
 
-		if (!rotate_list(e->verts).uand)
+		if (!rotate_list(vcvertptr, e->verts).uand)
 		{			//all off screen?
 			nfacing = nnfacing = 0;
 			auto &tv1 = *vcvertptr(e->verts[0]);
 			j = 0;
 			while( j<e->num_faces && (nfacing==0 || nnfacing==0) )	{
-				if (!g3_check_normal_facing(tv1, vcsegptr(e->segnum[j])->sides[e->sides[j]].normals[0]))
+				if (!g3_check_normal_facing(tv1, vcsegptr(e->segnum[j])->shared_segment::sides[e->sides[j]].normals[0]))
 					nfacing++;
 				else
 					nnfacing++;
@@ -1333,11 +1325,14 @@ static void add_segment_edges(fvcsegptr &vcsegptr, fvcwallptr &vcwallptr, automa
 			break;
 		}
 
-		if (seg->sides[sn].wall_num != wall_none)	{
-		
-			auto &w = *vcwallptr(seg->sides[sn].wall_num);
+		const auto wall_num = seg->shared_segment::sides[sn].wall_num;
+		if (wall_num != wall_none)
+		{
+			auto &w = *vcwallptr(wall_num);
 #if defined(DXX_BUILD_DESCENT_II)
 			auto trigger_num = w.trigger;
+			auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+			auto &vmtrgptr = Triggers.vmptr;
 			if (trigger_num != trigger_none && vmtrgptr(trigger_num)->type == TT_SECRET_EXIT)
 				{
 			    color = BM_XRGB( 29, 0, 31 );
@@ -1357,9 +1352,10 @@ static void add_segment_edges(fvcsegptr &vcsegptr, fvcwallptr &vcwallptr, automa
 				} else if (!(WallAnims[w.clip_num].flags & WCF_HIDDEN)) {
 					auto connected_seg = seg->children[sn];
 					if (connected_seg != segment_none) {
-						const auto &vcseg = vcsegptr(connected_seg);
+						auto &vcseg = *vcsegptr(connected_seg);
 						const auto &connected_side = find_connect_side(seg, vcseg);
-						switch (vcwallptr(vcseg->sides[connected_side].wall_num)->keys)
+						auto &wall = *vcwallptr(vcseg.shared_segment::sides[connected_side].wall_num);
+						switch (wall.keys)
 						{
 							case KEY_BLUE:
 								color = am->wall_door_blue;
@@ -1386,7 +1382,7 @@ static void add_segment_edges(fvcsegptr &vcsegptr, fvcwallptr &vcwallptr, automa
 			case WALL_CLOSED:
 				// Make grates draw properly
 				// NOTE: In original D1, is_grate is 1, hidden_flag not used so grates never fade. I (zico) like this so I leave this alone for now. 
-				if (!(is_grate = WALL_IS_DOORWAY(seg, sn) & WID_RENDPAST_FLAG))
+				if (!(is_grate = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sn) & WID_RENDPAST_FLAG))
 					hidden_flag = EF_SECRET;
 				color = am->wall_normal_color;
 				break;
@@ -1431,14 +1427,13 @@ static void add_segment_edges(fvcsegptr &vcsegptr, fvcwallptr &vcwallptr, automa
 
 // Adds all the edges from a segment we haven't visited yet.
 
-static void add_unknown_segment_edges(automap *am, const vcsegptridx_t seg)
+static void add_unknown_segment_edges(automap *am, const shared_segment &seg)
 {
-	const auto &segnum = seg;
 	for (unsigned sn = 0; sn < MAX_SIDES_PER_SEGMENT; ++sn)
 	{
 		// Only add edges that have no children
-		if (seg->children[sn] == segment_none) {
-			const auto vertex_list = get_side_verts(segnum,sn);
+		if (seg.children[sn] == segment_none) {
+			const auto vertex_list = get_side_verts(seg, sn);
 	
 			add_one_unknown_edge( am, vertex_list[0], vertex_list[1] );
 			add_one_unknown_edge( am, vertex_list[1], vertex_list[2] );
@@ -1459,6 +1454,8 @@ void automap_build_edge_list(automap *am, int add_all_edges)
 	am->num_edges = 0;
 	am->end_valid_edges = 0;
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	if (add_all_edges)	{
 		// Cheating, add all edges as visited
 		range_for (const auto &&segp, vcsegptridx)
@@ -1504,7 +1501,7 @@ void automap_build_edge_list(automap *am, int add_all_edges)
 		for (unsigned e1 = 0; e1 < num_faces; ++e1)
 		{
 			const auto e1segnum = e->segnum[e1];
-			const auto &e1siden0 = vcsegptr(e1segnum)->sides[e->sides[e1]].normals[0];
+			const auto &e1siden0 = vcsegptr(e1segnum)->shared_segment::sides[e->sides[e1]].normals[0];
 			for (unsigned e2 = 1; e2 < num_faces; ++e2)
 			{
 				if (e1 == e2)
@@ -1512,7 +1509,7 @@ void automap_build_edge_list(automap *am, int add_all_edges)
 				const auto e2segnum = e->segnum[e2];
 				if (e1segnum == e2segnum)
 					continue;
-				if (vm_vec_dot(e1siden0, vcsegptr(e2segnum)->sides[e->sides[e2]].normals[0]) > (F1_0 - (F1_0 / 10)))
+				if (vm_vec_dot(e1siden0, vcsegptr(e2segnum)->shared_segment::sides[e->sides[e2]].normals[0]) > (F1_0 - (F1_0 / 10)))
 				{
 					e->flags &= (~EF_DEFINING);
 					break;

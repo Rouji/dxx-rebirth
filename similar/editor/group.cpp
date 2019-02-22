@@ -323,7 +323,7 @@ static void med_create_group_rotation_matrix(vms_matrix &result_mat, int delta_f
 	//	which means that the destination rotation is specified, not as a delta, but as an absolute
 	if (delta_flag) {
 	 	//	Create rotation matrix describing rotation.
-	 	med_extract_matrix_from_segment(first_seg, &rotmat4);		// get rotation matrix describing current orientation of first seg
+		med_extract_matrix_from_segment(first_seg, rotmat4);		// get rotation matrix describing current orientation of first seg
 		update_matrix_based_on_side(rotmat4, first_side);
 		rotmat3 = vm_transposed_matrix(orient_matrix);
 		const auto vm_desired_orientation = vm_matrix_x_matrix(rotmat4,rotmat3);			// this is the desired orientation of the new segment
@@ -332,7 +332,7 @@ static void med_create_group_rotation_matrix(vms_matrix &result_mat, int delta_f
 	} else {
 	 	//	Create rotation matrix describing rotation.
  
-	 	med_extract_matrix_from_segment(base_seg, &rotmat);		// get rotation matrix describing desired orientation
+		med_extract_matrix_from_segment(base_seg, rotmat);		// get rotation matrix describing desired orientation
 	 	update_matrix_based_on_side(rotmat, base_side);				// modify rotation matrix for desired side
  
 	 	//	If the new segment is to be attached without rotation, then its orientation is the same as the base_segment
@@ -341,7 +341,7 @@ static void med_create_group_rotation_matrix(vms_matrix &result_mat, int delta_f
 		pbh.b = orientation*16384;
 		vm_angles_2_matrix(rotmat3,pbh);
 		rotmat4 = rotmat = vm_matrix_x_matrix(rotmat4, rotmat3);
-	 	med_extract_matrix_from_segment(first_seg, &rotmat3);		// get rotation matrix describing current orientation of first seg
+		med_extract_matrix_from_segment(first_seg, rotmat3);		// get rotation matrix describing current orientation of first seg
  
 	 	// It is curious that the following statement has no analogue in the med_attach_segment_rotated code.
 	 	//	Perhaps it is because segments are always attached at their front side.  If the back side is the side
@@ -366,6 +366,9 @@ static inline vms_matrix med_create_group_rotation_matrix(int delta_flag, const 
 static void med_rotate_group(const vms_matrix &rotmat, group::segment_array_type_t &group_seglist, const vcsegptr_t first_seg, int first_side)
 {
 	array<int8_t, MAX_VERTICES> vertex_list;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &vmvertptridx = Vertices.vmptridx;
 	const auto &&rotate_center = compute_center_point_on_side(vcvertptr, first_seg, first_side);
 
 	//	Create list of points to rotate.
@@ -435,6 +438,8 @@ static void duplicate_group(array<uint8_t, MAX_VERTICES> &vertex_ids, group::seg
 	new_vertex_ids.fill(-1);
 
 	//	duplicate vertices
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptridx = Vertices.vcptridx;
 	range_for (auto &&v, vcvertptridx)
 	{
 		if (vertex_ids[v])
@@ -447,12 +452,12 @@ static void duplicate_group(array<uint8_t, MAX_VERTICES> &vertex_ids, group::seg
 	range_for(const auto &gs, segments)
 	{
 		const auto &&segp = vmsegptr(gs);
-		const auto &&new_segment_id = med_create_duplicate_segment(segp);
+		const auto &&new_segment_id = med_create_duplicate_segment(Segments, segp);
 		new_segments.emplace_back(new_segment_id);
 		range_for (const auto objp, objects_in(segp, vmobjptridx, vmsegptr))
 		{
 			if (objp->type != OBJ_PLAYER) {
-				const auto &&new_obj_id = obj_create_copy(objp, objp->pos, vmsegptridx(new_segment_id));
+				const auto &&new_obj_id = obj_create_copy(objp, vmsegptridx(new_segment_id));
 				(void)new_obj_id; // FIXME!
 			}
 		}
@@ -583,6 +588,8 @@ static int med_copy_group(int delta_flag, const vmsegptridx_t base_seg, int base
 		s.matcen_num = -1;
 	}
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	// Breaking connections between segments in the current group and segments not in the group.
 	range_for(const auto &gs, GroupList[new_current_group].segments)
 	{
@@ -591,7 +598,7 @@ static int med_copy_group(int delta_flag, const vmsegptridx_t base_seg, int base
 			if (IS_CHILD(segp->children[c])) {
 				if (!in_group(segp->children[c], new_current_group)) {
 					segp->children[c] = segment_none;
-					validate_segment_side(segp,c);					// we have converted a connection to a side so validate the segment
+					validate_segment_side(vcvertptr, segp, c);					// we have converted a connection to a side so validate the segment
 				}
 			}
 	}
@@ -601,6 +608,7 @@ static int med_copy_group(int delta_flag, const vmsegptridx_t base_seg, int base
 	//	Now do the copy
 	//	First, xlate all vertices so center of group_seg:group_side is at origin
 	const auto &&srcv = compute_center_point_on_side(vcvertptr, group_seg, group_side);
+	auto &vmvertptridx = Vertices.vmptridx;
 	range_for (auto &&v, vmvertptridx)
 		if (in_vertex_list[v])
 			vm_vec_sub2(*v, srcv);
@@ -691,6 +699,9 @@ static int med_move_group(int delta_flag, const vmsegptridx_t base_seg, int base
 	// create an extra copy of the vertex so we can just move the ones in the in list.
 	//	Can't use Highest_vertex_index as loop termination because it gets increased by med_create_duplicate_vertex.
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &vmvertptridx = Vertices.vmptridx;
 	range_for (auto &&v, vmvertptridx)
 		if (in_vertex_list[v])
 			if (out_vertex_list[v]) {
@@ -724,15 +735,15 @@ static int med_move_group(int delta_flag, const vmsegptridx_t base_seg, int base
 					for (d=0; d<MAX_SIDES_PER_SEGMENT; d++)
 						if (IS_CHILD(csegp->children[d]))
 							{
-							const auto &&dsegp = vmsegptr(csegp->children[d]);
-							if (dsegp->group == current_group)
+							auto &dsegp = *vmsegptr(csegp->children[d]);
+							if (dsegp.group == current_group)
 								{
 								csegp->children[d] = segment_none;
-								validate_segment_side(csegp,d);					// we have converted a connection to a side so validate the segment
+								validate_segment_side(vcvertptr, csegp, d);					// we have converted a connection to a side so validate the segment
 								}
 							}
 					segp->children[c] = segment_none;
-					validate_segment_side(segp,c);					// we have converted a connection to a side so validate the segment
+					validate_segment_side(vcvertptr, segp, c);					// we have converted a connection to a side so validate the segment
 					}
 				}
 		}
@@ -783,10 +794,12 @@ static int med_move_group(int delta_flag, const vmsegptridx_t base_seg, int base
 //	-----------------------------------------------------------------------------
 static segnum_t place_new_segment_in_world(void)
 {
-	const auto &&segnum = vmsegptridx(get_free_segment_number());
+	const auto &&segnum = Segments.vmptridx(get_free_segment_number(Segments));
 	auto &seg = *segnum;
 	seg = New_segment;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	for (unsigned v = 0; v != MAX_VERTICES_PER_SEGMENT; ++v)
 		seg.verts[v] = med_create_duplicate_vertex(vcvertptr(New_segment.verts[v]));
 
@@ -816,7 +829,11 @@ static int AttachSegmentNewAng(const vms_angvec &pbh)
 		med_create_new_segment_from_cursegp();
 
 		if (Lock_view_to_cursegp)
-			set_view_target_from_segment(Cursegp);
+		{
+			auto &Vertices = LevelSharedVertexState.get_vertices();
+			auto &vcvertptr = Vertices.vcptr;
+			set_view_target_from_segment(vcvertptr, Cursegp);
+		}
 
 		Update_flags |= UF_WORLD_CHANGED;
 		mine_changed = 1;
@@ -842,8 +859,10 @@ int AttachSegmentNew(void)
 //	-----------------------------------------------------------------------------
 void validate_selected_segments(void)
 {
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	range_for (const auto &gs, GroupList[current_group].segments)
-		validate_segment(vmsegptridx(gs));
+		validate_segment(vcvertptr, vmsegptridx(gs));
 }
 
 // =====================================================================================
@@ -911,7 +930,7 @@ int rotate_segment_new(const vms_angvec &pbh)
 	const auto &&basesegp = vmsegptridx(baseseg);
 	const auto &&baseseg_side = find_connect_side(newseg, basesegp);
 
-	med_extract_matrix_from_segment(newseg, &tm1);
+	med_extract_matrix_from_segment(newseg, tm1);
 	tm1 = vmd_identity_matrix;
 	const auto tm2 = vm_angles_2_matrix(pbh);
 	const auto orient_matrix = vm_matrix_x_matrix(tm1,tm2);
@@ -945,7 +964,11 @@ int RotateSegmentNew(vms_angvec *pbh)
 	rval = rotate_segment_new(*pbh);
 
 	if (Lock_view_to_cursegp)
-		set_view_target_from_segment(Cursegp);
+	{
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
+		set_view_target_from_segment(vcvertptr, Cursegp);
+	}
 
 	Update_flags |= UF_WORLD_CHANGED;
 	mine_changed = 1;
@@ -1219,7 +1242,7 @@ static int med_load_group( const char *filename, group::vertex_array_type_t &ver
 			if (PHYSFS_read( LoadFile, &tseg, sizeof(segment),1 )!=1)
 				Error( "Error reading tseg in group.c" );
 				
-			group::segment_array_type_t::value_type s = get_free_segment_number();
+			group::segment_array_type_t::value_type s = get_free_segment_number(Segments);
 			segment_ids.emplace_back(s);
 			const auto &&segp = vmsegptridx(s);
 			*segp = tseg; 
@@ -1241,7 +1264,10 @@ static int med_load_group( const char *filename, group::vertex_array_type_t &ver
 			// Fix children and walls.
 			for (unsigned j = 0; j < MAX_SIDES_PER_SEGMENT; ++j)
 			{
-				Segments[gs].sides[j].wall_num = wall_none;
+				auto &seg = Segments[gs];
+				shared_segment &useg = seg;
+				unique_segment &useg = seg;
+				sseg.sides[j].wall_num = wall_none;
 				if (IS_CHILD(Segments[gs].children[j])) {
 					segnum_t segnum;
 					segnum = segment_ids[Segments[gs].children[j]];
@@ -1250,12 +1276,12 @@ static int med_load_group( const char *filename, group::vertex_array_type_t &ver
 				//Translate textures.
 				if (translate == 1) {
 					int	temp;
-					tmap_xlate = Segments[gs].sides[j].tmap_num;
-					Segments[gs].sides[j].tmap_num = tmap_xlate_table[tmap_xlate];
-					temp = Segments[gs].sides[j].tmap_num2;
+					tmap_xlate = useg.sides[j].tmap_num;
+					useg.sides[j].tmap_num = tmap_xlate_table[tmap_xlate];
+					temp = useg.sides[j].tmap_num2;
 					tmap_xlate = temp & 0x3fff;			// strip off orientation bits
 					if (tmap_xlate != 0)
-                                                Segments[gs].sides[j].tmap_num2 = (temp & (~0x3fff)) | tmap_xlate_table[tmap_xlate];  // mask on original orientation bits
+						useg.sides[j].tmap_num2 = (temp & (~0x3fff)) | tmap_xlate_table[tmap_xlate];  // mask on original orientation bits
 					}
 				}
 			}
@@ -1509,7 +1535,11 @@ int Degroup( void )
 		current_group = -1;
 
    if (Lock_view_to_cursegp)
-       set_view_target_from_segment(Cursegp);
+	{
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
+       set_view_target_from_segment(vcvertptr, Cursegp);
+	}
    Update_flags |= UF_WORLD_CHANGED;
    mine_changed = 1;
    diagnostic_message("Group UNgrouped.");
@@ -1767,7 +1797,11 @@ int DeleteGroup( void )
 
 	undo_status[Autosave_count] = "Delete Group UNDONE.";
    if (Lock_view_to_cursegp)
-       set_view_target_from_segment(Cursegp);
+	{
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
+       set_view_target_from_segment(vcvertptr, Cursegp);
+	}
 
    Update_flags |= UF_WORLD_CHANGED;
    mine_changed = 1;

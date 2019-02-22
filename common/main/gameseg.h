@@ -54,34 +54,40 @@ struct vertex_vertnum_pair
 	unsigned vertex, vertnum;
 };
 using vertex_vertnum_array_list = array<vertex_vertnum_pair, 6>;
-}
 
 #ifdef dsx
-namespace dsx {
-extern int	Doing_lighting_hack_flag;
-void compute_center_point_on_side(fvcvertptr &vcvertptr, vms_vector &vp, const segment &sp, unsigned side);
-static inline vms_vector compute_center_point_on_side(fvcvertptr &vcvertptr, const segment &sp, const unsigned side)
+__attribute_warn_unused_result
+uint_fast32_t find_connect_side(vcsegidx_t base_seg, const shared_segment &con_seg);
+
+void compute_center_point_on_side(fvcvertptr &vcvertptr, vms_vector &vp, const shared_segment &sp, unsigned side);
+static inline vms_vector compute_center_point_on_side(fvcvertptr &vcvertptr, const shared_segment &sp, const unsigned side)
 {
 	vms_vector v;
 	return compute_center_point_on_side(vcvertptr, v, sp, side), v;
 }
-void compute_segment_center(fvcvertptr &vcvertptr, vms_vector &vp, const segment &sp);
-static inline vms_vector compute_segment_center(fvcvertptr &vcvertptr, const segment &sp)
+void compute_segment_center(fvcvertptr &vcvertptr, vms_vector &vp, const shared_segment &sp);
+static inline vms_vector compute_segment_center(fvcvertptr &vcvertptr, const shared_segment &sp)
 {
 	vms_vector v;
 	compute_segment_center(vcvertptr, v, sp);
 	return v;
 }
-__attribute_warn_unused_result
-uint_fast32_t find_connect_side(vcsegidx_t base_seg, const segment &con_seg);
 
 // Fill in array with four absolute point numbers for a given side
-void get_side_verts(side_vertnum_list_t &vertlist, const segment &seg, unsigned sidenum);
-static inline side_vertnum_list_t get_side_verts(const segment &segnum, const unsigned sidenum)
+void get_side_verts(side_vertnum_list_t &vertlist, const shared_segment &seg, unsigned sidenum);
+static inline side_vertnum_list_t get_side_verts(const shared_segment &segnum, const unsigned sidenum)
 {
 	side_vertnum_list_t r;
 	return get_side_verts(r, segnum, sidenum), r;
 }
+#endif
+}
+
+#ifdef dsx
+namespace dsx {
+#if defined(DXX_BUILD_DESCENT_II) || DXX_USE_EDITOR
+extern int	Doing_lighting_hack_flag;
+#endif
 
 #if DXX_USE_EDITOR
 //      Create all vertex lists (1 or 2) for faces on a side.
@@ -94,31 +100,31 @@ static inline side_vertnum_list_t get_side_verts(const segment &segnum, const un
 // Note: these are not absolute vertex numbers, but are relative to the segment
 // Note:  for triagulated sides, the middle vertex of each trianle is the one NOT
 //   adjacent on the diagonal edge
-uint_fast32_t create_all_vertex_lists(vertex_array_list_t &vertices, vcsegptr_t segnum, const side *sidep, uint_fast32_t sidenum);
+uint_fast32_t create_all_vertex_lists(vertex_array_list_t &vertices, const shared_segment &seg, const shared_side &sidep, uint_fast32_t sidenum);
 __attribute_warn_unused_result
-static inline std::pair<uint_fast32_t, vertex_array_list_t> create_all_vertex_lists(vcsegptr_t segnum, const side *sidep, uint_fast32_t sidenum)
+static inline std::pair<uint_fast32_t, vertex_array_list_t> create_all_vertex_lists(const shared_segment &segnum, const shared_side &sidep, const uint_fast32_t sidenum)
 {
 	vertex_array_list_t r;
-	auto n = create_all_vertex_lists(r, segnum, sidep, sidenum);
+	const auto &&n = create_all_vertex_lists(r, segnum, sidep, sidenum);
 	return {n, r};
 }
 #endif
 
 //like create_all_vertex_lists(), but generate absolute point numbers
-uint_fast32_t create_abs_vertex_lists(vertex_array_list_t &vertices, vcsegptr_t segnum, const side *sidep, uint_fast32_t sidenum);
+uint_fast32_t create_abs_vertex_lists(vertex_array_list_t &vertices, const shared_segment &segnum, const shared_side &sidep, uint_fast32_t sidenum);
 
 __attribute_warn_unused_result
-static inline std::pair<uint_fast32_t, vertex_array_list_t> create_abs_vertex_lists(vcsegptr_t segnum, const side *sidep, uint_fast32_t sidenum)
+static inline std::pair<uint_fast32_t, vertex_array_list_t> create_abs_vertex_lists(const shared_segment &segnum, const shared_side &sidep, const uint_fast32_t sidenum)
 {
 	vertex_array_list_t r;
-	auto n = create_abs_vertex_lists(r, segnum, sidep, sidenum);
+	const auto &&n = create_abs_vertex_lists(r, segnum, sidep, sidenum);
 	return {n, r};
 }
 
 __attribute_warn_unused_result
-static inline std::pair<uint_fast32_t, vertex_array_list_t> create_abs_vertex_lists(vcsegptr_t segp, uint_fast32_t sidenum)
+static inline std::pair<uint_fast32_t, vertex_array_list_t> create_abs_vertex_lists(const shared_segment &segp, const uint_fast32_t sidenum)
 {
-	return create_abs_vertex_lists(segp, &segp->sides[sidenum], sidenum);
+	return create_abs_vertex_lists(segp, segp.sides[sidenum], sidenum);
 }
 
 // -----------------------------------------------------------------------------------
@@ -127,9 +133,9 @@ static inline std::pair<uint_fast32_t, vertex_array_list_t> create_abs_vertex_li
 //      If there is one face, it has 4 vertices.
 //      If there are two faces, they both have three vertices, so face #0 is stored in vertices 0,1,2,
 //      face #1 is stored in vertices 3,4,5.
-void create_all_vertnum_lists(vertex_vertnum_array_list &vertnums, vcsegptr_t segnum, const side *const sidep, uint_fast32_t sidenum);
+void create_all_vertnum_lists(vertex_vertnum_array_list &vertnums, const shared_segment &seg, const shared_side &sidep, uint_fast32_t sidenum);
 __attribute_warn_unused_result
-static inline vertex_vertnum_array_list create_all_vertnum_lists(vcsegptr_t segnum, const side *const sidep, uint_fast32_t sidenum)
+static inline vertex_vertnum_array_list create_all_vertnum_lists(const shared_segment &segnum, const shared_side &sidep, const uint_fast32_t sidenum)
 {
 	vertex_vertnum_array_list r;
 	return create_all_vertnum_lists(r, segnum, sidep, sidenum), r;
@@ -138,14 +144,14 @@ static inline vertex_vertnum_array_list create_all_vertnum_lists(vcsegptr_t segn
 
 namespace dcx {
 //      Given a side, return the number of faces
-bool get_side_is_quad(const side &sidep);
+bool get_side_is_quad(const shared_side &sidep);
 struct WALL_IS_DOORWAY_mask_t;
 }
 
 namespace dsx {
 //returns 3 different bitmasks with info telling if this sphere is in
 //this segment.  See segmasks structure for info on fields
-segmasks get_seg_masks(fvcvertptr &, const vms_vector &checkp, vcsegptr_t segnum, fix rad);
+segmasks get_seg_masks(fvcvertptr &, const vms_vector &checkp, const shared_segment &segnum, fix rad);
 
 //this macro returns true if the segnum for an object is correct
 #define check_obj_seg(vcvertptr, obj) (get_seg_masks(vcvertptr, (obj)->pos, vcsegptr((obj)->segnum), 0).centermask == 0)
@@ -155,7 +161,8 @@ segmasks get_seg_masks(fvcvertptr &, const vms_vector &checkp, vcsegptr_t segnum
 // 2. Recursively trace through attached segments
 // 3. Check all the segmentns
 //Returns segnum if found, or -1
-imsegptridx_t find_point_seg(const vms_vector &p,imsegptridx_t segnum);
+imsegptridx_t find_point_seg(const d_level_shared_segment_state &, d_level_unique_segment_state &, const vms_vector &p, imsegptridx_t segnum);
+icsegptridx_t find_point_seg(const d_level_shared_segment_state &, const vms_vector &p, icsegptridx_t segnum);
 
 //      ----------------------------------------------------------------------------------------------------------
 //      Determine whether seg0 and seg1 are reachable using wid_flag to go through walls.
@@ -166,48 +173,51 @@ imsegptridx_t find_point_seg(const vms_vector &p,imsegptridx_t segnum);
 vm_distance find_connected_distance(const vms_vector &p0, vcsegptridx_t seg0, const vms_vector &p1, vcsegptridx_t seg1, int max_depth, WALL_IS_DOORWAY_mask_t wid_flag);
 
 //create a matrix that describes the orientation of the given segment
-void extract_orient_from_segment(vms_matrix *m,vcsegptr_t seg);
+void extract_orient_from_segment(fvcvertptr &vcvertptr, vms_matrix &m, const shared_segment &seg);
 
+void validate_segment_all(d_level_shared_segment_state &);
+
+#if DXX_USE_EDITOR
 //      In segment.c
 //      Make a just-modified segment valid.
 //              check all sides to see how many faces they each should have (0,1,2)
 //              create new vector normals
-void validate_segment(vmsegptridx_t sp);
-
-extern void validate_segment_all(void);
+void validate_segment(fvcvertptr &vcvertptr, vmsegptridx_t sp);
 
 //      Extract the forward vector from segment *sp, return in *vp.
 //      The forward vector is defined to be the vector from the the center of the front face of the segment
 // to the center of the back face of the segment.
-void extract_forward_vector_from_segment(vcsegptr_t sp,vms_vector &vp);
+void extract_forward_vector_from_segment(fvcvertptr &, const shared_segment &sp, vms_vector &vp);
 
 //      Extract the right vector from segment *sp, return in *vp.
 //      The forward vector is defined to be the vector from the the center of the left face of the segment
 // to the center of the right face of the segment.
-void extract_right_vector_from_segment(vcsegptr_t sp,vms_vector &vp);
+void extract_right_vector_from_segment(fvcvertptr &, const shared_segment &sp, vms_vector &vp);
 
 //      Extract the up vector from segment *sp, return in *vp.
 //      The forward vector is defined to be the vector from the the center of the bottom face of the segment
 // to the center of the top face of the segment.
-void extract_up_vector_from_segment(vcsegptr_t sp,vms_vector &vp);
+void extract_up_vector_from_segment(fvcvertptr &, const shared_segment &sp, vms_vector &vp);
 
-void create_walls_on_side(vmsegptridx_t sp, int sidenum);
+void create_walls_on_side(fvcvertptr &, shared_segment &sp, unsigned sidenum);
 
-void pick_random_point_in_seg(vms_vector &new_pos, vcsegptr_t sp);
-static inline vms_vector pick_random_point_in_seg(vcsegptr_t sp)
+void validate_segment_side(fvcvertptr &, vmsegptridx_t sp, unsigned sidenum);
+#endif
+
+void pick_random_point_in_seg(fvcvertptr &vcvertptr, vms_vector &new_pos, const shared_segment &sp);
+static inline vms_vector pick_random_point_in_seg(fvcvertptr &vcvertptr, const shared_segment &sp)
 {
 	vms_vector v;
-	return pick_random_point_in_seg(v, sp), v;
+	return pick_random_point_in_seg(vcvertptr, v, sp), v;
 }
 
-void validate_segment_side(vmsegptridx_t sp, int sidenum);
 int check_segment_connections(void);
-unsigned set_segment_depths(int start_seg, array<ubyte, MAX_SEGMENTS> *limit, segment_depth_array_t &depths);
+unsigned set_segment_depths(vcsegidx_t start_seg, const array<uint8_t, MAX_SEGMENTS> *limit, segment_depth_array_t &depths);
 #if defined(DXX_BUILD_DESCENT_I)
 static inline void flush_fcd_cache() {}
 #elif defined(DXX_BUILD_DESCENT_II)
 void flush_fcd_cache();
-void apply_all_changed_light(void);
+void apply_all_changed_light(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, fvmsegptridx &vmsegptridx);
 void	set_ambient_sound_flags(void);
 #endif
 }

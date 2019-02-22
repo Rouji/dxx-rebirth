@@ -29,9 +29,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #ifdef __cplusplus
 #include "dxxsconf.h"
-#include "dsx-ns.h"
-#include "compiler-array.h"
 #include "fwd-valptridx.h"
+#include "fwd-vclip.h"
+#include "fwd-weapon.h"
 
 
 #define VCLIP_SMALL_EXPLOSION       2
@@ -43,13 +43,10 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #ifdef dsx
 namespace dsx {
 #if defined(DXX_BUILD_DESCENT_I)
-constexpr std::integral_constant<std::size_t, 70> VCLIP_MAXNUM{};
 #elif defined(DXX_BUILD_DESCENT_II)
 #define VCLIP_WATER_HIT             84
 #define VCLIP_AFTERBURNER_BLOB      95
 #define VCLIP_MONITOR_STATIC        99
-
-constexpr std::integral_constant<std::size_t, 110> VCLIP_MAXNUM{};
 #endif
 }
 
@@ -72,16 +69,12 @@ struct vclip : public prohibit_void_ptr<vclip>
 
 constexpr std::integral_constant<int, -1> vclip_none{};
 
-extern unsigned Num_vclips;
-
 }
 
 namespace dsx {
-extern array<vclip, VCLIP_MAXNUM> Vclip;
-
 // draw an object which renders as a vclip.
 void draw_vclip_object(grs_canvas &, vcobjptridx_t obj, fix timeleft, int lighted, const vclip &);
-void draw_weapon_vclip(grs_canvas &, vcobjptridx_t obj);
+void draw_weapon_vclip(const d_vclip_array &Vclip, const weapon_info_array &Weapon_info, grs_canvas &, vcobjptridx_t obj);
 }
 
 namespace dcx {

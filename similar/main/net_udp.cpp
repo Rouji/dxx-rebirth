@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -63,6 +63,7 @@
 
 #include "dxxsconf.h"
 #include "compiler-array.h"
+#include "compiler-cf_assert.h"
 #include "compiler-exchange.h"
 #include "compiler-range_for.h"
 #include "compiler-lengthof.h"
@@ -165,7 +166,7 @@ static int udp_tracker_process_game( ubyte *data, int data_len, const _sockaddr 
 static void udp_tracker_process_ack( ubyte *data, int data_len, const _sockaddr &sender_addr );
 static void udp_tracker_verify_ack_timeout();
 static void udp_tracker_request_holepunch( uint16_t TrackerGameID );
-static void udp_tracker_process_holepunch( ubyte *data, int data_len, const _sockaddr &sender_addr );
+static void udp_tracker_process_holepunch(uint8_t *data, unsigned data_len, const _sockaddr &sender_addr );
 #endif
 
 static fix64 StartAbortMenuTime;
@@ -850,7 +851,7 @@ struct list_join : direct_join
 		entries = ((UDP_NETGAMES_PPAGE + 5) * 2) + 1,
 	};
 	array<newmenu_item, entries> m;
-	array<array<char, 74>, entries> ljtext;
+	array<array<char, 92>, entries> ljtext;
 };
 
 manual_join_user_inputs manual_join::s_last_inputs;
@@ -1043,6 +1044,37 @@ void net_udp_manual_join_game()
 	newmenu_do1(nullptr, "ENTER GAME ADDRESS", nitems, &m[0], manual_join_game_handler, dj.release(), 0);
 }
 
+static void copy_truncate_string(const grs_font &cv_font, const font_x_scaled_float strbound, array<char, 25> &out, const ntstring<25> &in)
+{
+	size_t k = 0, x = 0;
+	char thold[2];
+	thold[1] = 0;
+	const std::size_t outsize = out.size();
+	range_for (const char c, in)
+	{
+		if (unlikely(c == '\t'))
+			continue;
+		if (unlikely(!c))
+			break;
+		thold[0] = c;
+		int tx;
+		gr_get_string_size(cv_font, thold, &tx, nullptr, nullptr);
+		if ((x += tx) >= strbound)
+		{
+			const std::size_t outbound = outsize - 4;
+			if (k > outbound)
+				k = outbound;
+			out[k] = out[k + 1] = out[k + 2] = '.';
+			k += 3;
+			break;
+		}
+		out[k++] = c;
+		if (k >= outsize - 1)
+			break;
+	}
+	out[k] = 0;
+}
+
 static int net_udp_list_join_poll(newmenu *menu, const d_event &event, list_join *const dj)
 {
 	// Polling loop for Join Game menu
@@ -1206,10 +1238,10 @@ static int net_udp_list_join_poll(newmenu *menu, const d_event &event, list_join
 	// Copy the active games data into the menu options
 	for (int i = 0; i < UDP_NETGAMES_PPAGE; i++)
 	{
-		int game_status = Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].game_status;
-		int j,x, k,nplayers = 0;
-		char levelname[8],MissName[25],GameName[25],thold[2];
-		thold[1]=0;
+		const auto &augi = Active_udp_games[(i + (NLPage * UDP_NETGAMES_PPAGE))];
+		int game_status = augi.game_status;
+		int nplayers = 0;
+		char levelname[8];
 
 		if ((i+(NLPage*UDP_NETGAMES_PPAGE)) >= num_active_udp_games)
 		{
@@ -1222,58 +1254,34 @@ static int net_udp_list_join_poll(newmenu *menu, const d_event &event, list_join
 		// if missiontitle or gamename contain a tab
 
 		const auto &&fspacx = FSPACX();
-		for (x=0,k=0,j=0;j<15;j++)
+		const auto &cv_font = *grd_curcanv->cv_font;
+		array<char, 25> MissName, GameName;
+		const auto &&fspacx55 = fspacx(55);
+		copy_truncate_string(cv_font, fspacx55, MissName, augi.mission_title);
+		copy_truncate_string(cv_font, fspacx55, GameName, augi.game_name);
+
+		nplayers = augi.numconnected;
+
+		const int levelnum = augi.levelnum;
+		if (levelnum < 0)
 		{
-			if (Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].mission_title[j]=='\t')
-				continue;
-			thold[0]=Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].mission_title[j];
-			int tx;
-			gr_get_string_size(*grd_curcanv->cv_font, thold, &tx, nullptr, nullptr);
-
-			if ((x += tx) >= fspacx(55))
-			{
-				MissName[k]=MissName[k+1]=MissName[k+2]='.';
-				k+=3;
-				break;
-			}
-
-			MissName[k++]=Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].mission_title[j];
+			cf_assert(-levelnum < MAX_SECRET_LEVELS_PER_MISSION);
+			snprintf(levelname, sizeof(levelname), "S%d", -levelnum);
 		}
-		MissName[k]=0;
-
-		for (x=0,k=0,j=0;j<15;j++)
-		{
-			if (Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].game_name[j]=='\t')
-				continue;
-			thold[0]=Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].game_name[j];
-			int tx;
-			gr_get_string_size(*grd_curcanv->cv_font, thold, &tx, nullptr, nullptr);
-
-			if ((x += tx) >= fspacx(55))
-			{
-				GameName[k]=GameName[k+1]=GameName[k+2]='.';
-				k+=3;
-				break;
-			}
-			GameName[k++]=Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].game_name[j];
-		}
-		GameName[k]=0;
-
-		nplayers = Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].numconnected;
-
-		if (Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].levelnum < 0)
-			snprintf(levelname, sizeof(levelname), "S%d", -Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].levelnum);
 		else
-			snprintf(levelname, sizeof(levelname), "%d", Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].levelnum);
+		{
+			cf_assert(levelnum < MAX_LEVELS_PER_MISSION);
+			snprintf(levelname, sizeof(levelname), "%d", levelnum);
+		}
 
 		const char *status;
 		if (game_status == NETSTAT_STARTING)
 			status = "FORMING ";
 		else if (game_status == NETSTAT_PLAYING)
 		{
-			if (Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].RefusePlayers)
+			if (augi.RefusePlayers)
 				status = "RESTRICT";
-			else if (Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].game_flag.closed)
+			else if (augi.game_flag.closed)
 				status = "CLOSED  ";
 			else
 				status = "OPEN    ";
@@ -1281,9 +1289,9 @@ static int net_udp_list_join_poll(newmenu *menu, const d_event &event, list_join
 		else
 			status = "BETWEEN ";
 		
-		unsigned gamemode = Active_udp_games[(i+(NLPage*UDP_NETGAMES_PPAGE))].gamemode;
+		unsigned gamemode = augi.gamemode;
 		auto &p = dj->ljtext[i];
-		snprintf(&p[0], p.size(), "%d.\t%s \t%s \t  %d/%d \t%s \t %s \t%s", (i + (NLPage * UDP_NETGAMES_PPAGE)) + 1, GameName, (gamemode < sizeof(GMNamesShrt) / sizeof(GMNamesShrt[0])) ? GMNamesShrt[gamemode] : "INVALID", nplayers, Active_udp_games[(i + (NLPage * UDP_NETGAMES_PPAGE))].max_numplayers, MissName, levelname, status);
+		snprintf(&p[0], p.size(), "%d.\t%.24s \t%.7s \t%3u/%u \t%.24s \t %s \t%s", (i + (NLPage * UDP_NETGAMES_PPAGE)) + 1, GameName.data(), (gamemode < sizeof(GMNamesShrt) / sizeof(GMNamesShrt[0])) ? GMNamesShrt[gamemode] : "INVALID", nplayers, augi.max_numplayers, MissName.data(), levelname, status);
 	}
 	return 0;
 }
@@ -1562,8 +1570,8 @@ static void net_udp_new_player(UDP_sequence_packet *const their)
 
 	plr.connected = CONNECT_PLAYING;
 	kill_matrix[pnum] = {};
-	const auto &&objp = vmobjptr(plr.objnum);
-	auto &player_info = objp->ctype.player_info;
+	auto &objp = *vmobjptr(plr.objnum);
+	auto &player_info = objp.ctype.player_info;
 	player_info.net_killed_total = 0;
 	player_info.net_kills_total = 0;
 	player_info.mission.score = 0;
@@ -1771,6 +1779,8 @@ namespace dsx {
 #if defined(DXX_BUILD_DESCENT_I)
 static void net_udp_send_door_updates(void)
 {
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptridx = Walls.vcptridx;
 	// Send door status when new player joins
 	range_for (const auto &&p, vcwallptridx)
 	{
@@ -1786,6 +1796,8 @@ static void net_udp_send_door_updates(void)
 static void net_udp_send_door_updates(const playernum_t pnum)
 {
 	// Send door status when new player joins
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptridx = Walls.vcptridx;
 	range_for (const auto &&p, vcwallptridx)
 	{
 		auto &w = *p;
@@ -1803,12 +1815,13 @@ static void net_udp_send_door_updates(const playernum_t pnum)
 
 static void net_udp_process_monitor_vector(uint32_t vector)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	if (!vector)
 		return;
-	range_for (const auto &&seg, vmsegptr)
+	range_for (unique_segment &seg, vmsegptr)
 	{
 		int tm, ec, bm;
-		range_for (auto &j, seg->sides)
+		range_for (auto &j, seg.sides)
 		{
 			if ( ((tm = j.tmap_num2) != 0) &&
 				(ec = TmapInfo[tm & 0x3fff].eclip_num) != eclip_none &&
@@ -1862,6 +1875,7 @@ public:
 
 static unsigned net_udp_create_monitor_vector(void)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	blown_bitmap_array blown_bitmaps;
 	constexpr size_t max_textures = Textures.size();
 	range_for (auto &i, partial_const_range(Effects, Num_effects))
@@ -1875,7 +1889,7 @@ static unsigned net_udp_create_monitor_vector(void)
 	unsigned vector = 0;
 	range_for (const auto &&seg, vcsegptridx)
 	{
-		range_for (auto &j, seg->sides)
+		range_for (auto &j, seg->unique_segment::sides)
 		{
 			const unsigned tm2 = j.tmap_num2;
 			if (!tm2)
@@ -2096,7 +2110,7 @@ static void net_udp_read_object_packet( ubyte *data )
 			// Special debug checksum marker for entire send
 			if (mode == 1)
 			{
-				special_reset_objects(ObjectState);
+				special_reset_objects(LevelUniqueObjectState);
 				mode = 0;
 			}
 			if (remote_objnum != object_count) {
@@ -2122,10 +2136,10 @@ static void net_udp_read_object_packet( ubyte *data )
 			else {
 				if (mode == 1)
 				{
-					special_reset_objects(ObjectState);
+					special_reset_objects(LevelUniqueObjectState);
 					mode = 0;
 				}
-				objnum = obj_allocate(ObjectState);
+				objnum = obj_allocate(LevelUniqueObjectState);
 			}
 			if (objnum != object_none) {
 				auto obj = vmobjptridx(objnum);
@@ -3260,7 +3274,9 @@ static int net_udp_start_poll(newmenu *, const d_event &event, start_poll_menu_i
 #if DXX_USE_TRACKER
 #define DXX_UDP_MENU_TRACKER_OPTION(VERB)	\
 	DXX_MENUITEM(VERB, CHECK, "Track this game on", opt_tracker, Netgame.Tracker) \
-	DXX_MENUITEM(VERB, TEXT, tracker_addr_txt, opt_tracker_addr)
+	DXX_MENUITEM(VERB, TEXT, tracker_addr_txt, opt_tracker_addr)	\
+	DXX_MENUITEM(VERB, CHECK, "Enable tracker NAT hole punch", opt_tracker_nathp, TrackerNATWarned)	\
+
 #else
 #define DXX_UDP_MENU_TRACKER_OPTION(VERB)
 #endif
@@ -3462,7 +3478,9 @@ public:
 	}
 	void update_secluded_spawn_string()
 	{
-		snprintf(SecludedSpawnText, sizeof(SecludedSpawnText), "Use %u Furthest Sites", Netgame.SecludedSpawns + 1);
+		const unsigned SecludedSpawns = Netgame.SecludedSpawns;
+		cf_assert(SecludedSpawns < MAX_PLAYERS);
+		snprintf(SecludedSpawnText, sizeof(SecludedSpawnText), "Use %u Furthest Sites", SecludedSpawns + 1);
 	}
 	void update_kill_goal_string()
 	{
@@ -3493,6 +3511,9 @@ public:
 #endif
 		update_extra_primary_string(primary);
 		update_extra_secondary_string(secondary);
+#if DXX_USE_TRACKER
+		const unsigned TrackerNATWarned = Netgame.TrackerNATWarned == TrackerNATHolePunchWarn::UserEnabledHP;
+#endif
 		DXX_UDP_MENU_OPTIONS(ADD);
 #if DXX_USE_TRACKER
 		const auto &tracker_addr = CGameArg.MplTrackerAddr;
@@ -3516,6 +3537,9 @@ public:
 		uint8_t thief_cannot_steal_energy_weapons;
 #endif
 		uint8_t difficulty;
+#if DXX_USE_TRACKER
+		unsigned TrackerNATWarned;
+#endif
 		DXX_UDP_MENU_OPTIONS(READ);
 		Netgame.difficulty = cast_clamp_difficulty(difficulty);
 		auto &items = Netgame.DuplicatePowerups;
@@ -3531,6 +3555,9 @@ public:
 		auto pps = strtol(packstring, &p, 10);
 		if (!*p)
 			Netgame.PacketsPerSec = pps;
+#if DXX_USE_TRACKER
+		Netgame.TrackerNATWarned = TrackerNATWarned ? TrackerNATHolePunchWarn::UserEnabledHP : TrackerNATHolePunchWarn::UserRejectedHP;
+#endif
 		convert_text_portstring(portstring, UDP_MyPort, false, false);
 	}
 	static void net_udp_more_game_options();
@@ -3701,7 +3728,9 @@ struct param_opt
 	}
 	void update_max_players_string()
 	{
-		snprintf(srmaxnet, sizeof(srmaxnet), "Maximum players: %u", Netgame.max_numplayers);
+		const unsigned max_numplayers = Netgame.max_numplayers;
+		cf_assert(max_numplayers < MAX_PLAYERS);
+		snprintf(srmaxnet, sizeof(srmaxnet), "Maximum players: %u", max_numplayers);
 	}
 };
 
@@ -3732,20 +3761,8 @@ static int net_udp_game_param_handler( newmenu *menu,const d_event &event, param
 			}
 #endif
 			
-			auto &slider = menus[opt->maxnet].slider();
 			if (menus[opt->coop].value)
 			{
-				if (menus[opt->maxnet].value>2) 
-				{
-					menus[opt->maxnet].value=2;
-				}
-				
-				if (slider.max_value > 2)
-				{
-					slider.max_value = 2;
-				}
-				opt->update_netgame_max_players();
-				
 				Netgame.game_flag.show_on_map = 1;
 
 				if (Netgame.PlayTimeAllowed || Netgame.KillGoal)
@@ -3755,16 +3772,6 @@ static int net_udp_game_param_handler( newmenu *menu,const d_event &event, param
 				}
 
 			}
-			else // if !Coop game
-			{
-				if (slider.max_value < 6)
-				{
-					menus[opt->maxnet].value=6;
-					slider.max_value = 6;
-					opt->update_netgame_max_players();
-				}
-			}
-			
 			if (citem == opt->level)
 			{
 				auto &slevel = opt->slevel;
@@ -3902,8 +3909,6 @@ window_event_result net_udp_setup_game()
 
 	read_netgame_profile(&Netgame);
 
-	if (Netgame.gamemode == NETGAME_COOPERATIVE) // did we restore Coop as default? then fix max players right now!
-		Netgame.max_numplayers = 4;
 #if defined(DXX_BUILD_DESCENT_II)
 	if (!HoardEquipped() && (Netgame.gamemode == NETGAME_HOARD || Netgame.gamemode == NETGAME_TEAM_HOARD)) // did we restore a hoard mode but don't have hoard installed right now? then fall back to anarchy!
 		Netgame.gamemode = NETGAME_ANARCHY;
@@ -3978,6 +3983,23 @@ window_event_result net_udp_setup_game()
 	nm_set_item_menu(  m[optnum], "Advanced Options"); optnum++;
 
 	Assert(optnum <= 20);
+
+#if DXX_USE_TRACKER
+	if (Netgame.TrackerNATWarned == TrackerNATHolePunchWarn::Unset)
+	{
+		const unsigned choice = nm_messagebox_str("NAT Hole Punch", nm_messagebox_tie("Yes, let Internet users join", "No, I will configure my router"),
+"Rebirth now supports automatic\n"
+"NAT hole punch through the\n"
+"tracker.\n\n"
+"This allows Internet users to\n"
+"join your game, even if you do\n"
+"not configure your router for\n"
+"hosting.\n\n"
+"Do you want to use this feature?");
+		if (choice <= 1)
+			Netgame.TrackerNATWarned = static_cast<TrackerNATHolePunchWarn>(choice + 1);
+	}
+#endif
 
 	int i;
 	i = newmenu_do1(nullptr, TXT_NETGAME_SETUP, optnum, m.data(), net_udp_game_param_handler, &opt, opt.start_game);
@@ -4617,9 +4639,9 @@ int net_udp_do_join_game()
 	}
 
 	// Check for valid mission name
-	if (!load_mission_by_name(Netgame.mission_name))
+	if (const auto errstr = load_mission_by_name(Netgame.mission_name))
 	{
-		nm_messagebox(NULL, 1, TXT_OK, TXT_MISSION_NOT_FOUND);
+		nm_messagebox(nullptr, 1, TXT_OK, "%s\n\n%s", TXT_MISSION_NOT_FOUND, errstr);
 		return 0;
 	}
 
@@ -5481,6 +5503,8 @@ static void net_udp_send_smash_lights (const playernum_t pnum)
 static void net_udp_send_fly_thru_triggers (const playernum_t pnum)
  {
   // send the fly thru triggers that have been disabled
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vctrgptridx = Triggers.vcptridx;
 	range_for (const auto &&t, vctrgptridx)
 	{
 		if (t->flags & TF_DISABLED)
@@ -6017,7 +6041,10 @@ static void udp_tracker_verify_ack_timeout()
 		con_puts(CON_URGENT, "[Tracker] No response from game tracker. Tracker address may be invalid or Tracker may be offline or otherwise unreachable.");
 	}
 	else if (TrackerAckStatus == TrackerAckState::TACK_INTERNAL)
-		con_puts(CON_NORMAL, "[Tracker] No external signal from game tracker. Your game port does not seem to be reachable. Clients will attempt hole-punching to join your game.");
+	{
+		con_puts(CON_NORMAL, "[Tracker] No external signal from game tracker.  Your game port does not seem to be reachable.");
+		con_puts(CON_NORMAL, Netgame.TrackerNATWarned == TrackerNATHolePunchWarn::UserEnabledHP ? "Clients will attempt hole-punching to join your game." : "Clients will only be able to join your game if specifically configured in your router.");
+	}
 	TrackerAckStatus = TrackerAckState::TACK_SEQCOMPL;
 }
 
@@ -6035,7 +6062,7 @@ static void udp_tracker_request_holepunch( uint16_t TrackerGameID )
 
 /* Tracker sent us an address from a client requesting hole punching.
  * We'll simply reply with another hole punch packet and wait for them to request our game info properly. */
-static void udp_tracker_process_holepunch( ubyte *data, int data_len, const _sockaddr &sender_addr )
+static void udp_tracker_process_holepunch(uint8_t *const data, const unsigned data_len, const _sockaddr &sender_addr )
 {
 	if (data_len == 1 && !multi_i_am_master())
 	{
@@ -6044,22 +6071,29 @@ static void udp_tracker_process_holepunch( ubyte *data, int data_len, const _soc
 	}
 	if (!Netgame.Tracker || !sender_is_tracker(sender_addr, TrackerSocket) || !multi_i_am_master())
 		return;
-
-	char *p0, delimiter[] = "/";
-	char sIP[46] = {};
-	array<char, 6> sPort{};
-	uint16_t iPort = 0;
-
-	p0 = strtok(reinterpret_cast<char *>(data), delimiter);
-	if (p0 == NULL)
+	if (Netgame.TrackerNATWarned != TrackerNATHolePunchWarn::UserEnabledHP)
+	{
+		con_puts(CON_NORMAL, "Ignoring tracker hole-punch request because user disabled hole punch.");
 		return;
-	p0++;
-	memcpy(sIP, p0, strlen(p0));
-	p0 = strtok(NULL, delimiter);
-	if (p0 == NULL)
+	}
+	if (!data_len || data[data_len - 1])
 		return;
-	memcpy(&sPort, p0, strlen(p0));
-	if (!convert_text_portstring(sPort, iPort, true, true))
+
+	auto &delimiter = "/";
+
+	const auto p0 = strtok(reinterpret_cast<char *>(data), delimiter);
+	if (!p0)
+		return;
+	const auto sIP = p0 + 1;
+	const auto pPort = strtok(NULL, delimiter);
+	if (!pPort)
+		return;
+	char *porterror;
+	const auto myport = strtoul(pPort, &porterror, 10);
+	if (*porterror)
+		return;
+	const uint16_t iPort = myport;
+	if (iPort != myport)
 		return;
 
 	// Get the DNS stuff

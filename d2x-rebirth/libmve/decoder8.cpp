@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -236,6 +236,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, cons
 	case 0x0:
 		/* block is copied from block in current frame */
 		copyFrame(*pFrame, *pFrame + (g_vBackBuf2 - g_vBackBuf1));
+		//-fallthrough
 	case 0x1:
 		/* block is unchanged from two frames ago */
 		*pFrame += 8;

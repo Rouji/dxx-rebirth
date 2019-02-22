@@ -107,6 +107,8 @@ int SaveGameData()
 		if (Perm_player_segnum > Highest_segment_index)
 			Perm_player_segnum = segment_none;
 
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
 		if (Perm_player_segnum!=segment_none) {
 			if (get_seg_masks(vcvertptr, Perm_player_position, vcsegptr(Perm_player_segnum), 0).centermask == 0)
 			{
@@ -117,7 +119,11 @@ int SaveGameData()
 			else
 				Perm_player_segnum=segment_none;		//position was bogus
 		}
-      saved_flag=save_level(game_filename);
+		saved_flag = save_level(
+#if defined(DXX_BUILD_DESCENT_II)
+			LevelSharedSegmentState.DestructibleLights,
+#endif
+			game_filename);
 		if (Perm_player_segnum!=segment_none) {
 
 			if (save_segnum > Highest_segment_index)
@@ -125,9 +131,12 @@ int SaveGameData()
 
 			ConsoleObject->pos = save_pos;
 			const auto &&save_segp = vmsegptridx(save_segnum);
-			auto found_save_segnum = find_point_seg(save_pos, save_segp);
+			auto found_save_segnum = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, save_pos, save_segp);
 			if (found_save_segnum == segment_none) {
 				found_save_segnum = save_segp;
+				auto &LevelSharedVertexState = LevelSharedSegmentState.get_vertex_state();
+				auto &Vertices = LevelSharedVertexState.get_vertices();
+				auto &vcvertptr = Vertices.vcptr;
 				compute_segment_center(vcvertptr, save_pos, save_segp);
 			}
 
@@ -150,7 +159,11 @@ if (SafetyCheck())  {
 	if (ui_get_filename( game_filename, "*." DXX_LEVEL_FILE_EXTENSION, "Load Level" ))
 		{
 		checkforgamext(game_filename);
-		if (load_level(game_filename))
+		if (load_level(
+#if defined(DXX_BUILD_DESCENT_II)
+				LevelSharedSegmentState.DestructibleLights,
+#endif
+				game_filename))
 			return 0;
 		Current_level_num = 1;			// assume level 1
 		gamestate = editor_gamestate::none;

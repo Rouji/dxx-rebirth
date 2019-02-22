@@ -89,7 +89,7 @@ using std::min;
 #define	BABY_SPIDER_ID	14
 
 namespace dsx {
-static void init_boss_segments(segment_array &segments, const object &boss_objnum, boss_special_segment_array_t &imsegptr, int size_check, int one_wall_hack);
+static void init_boss_segments(const segment_array &segments, const object &boss_objnum, d_level_shared_boss_state::special_segment_array_t &a, int size_check, int one_wall_hack);
 static void ai_multi_send_robot_position(object &objnum, int force);
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -144,10 +144,6 @@ constexpr array<int8_t, 8> Mike_to_matt_xlate{{
 #define	BOSS_DEATH_DURATION	(F1_0*6)
 //	Amount of time since the current robot was last processed for things such as movement.
 //	It is not valid to use FrameTime because robots do not get moved every frame.
-
-boss_teleport_segment_array_t	Boss_teleport_segs;
-
-static boss_gate_segment_array_t Boss_gate_segs;
 
 // ---------- John: These variables must be saved as part of gamesave. --------
 static int             Overall_agitation;
@@ -475,8 +471,10 @@ void ai_init_boss_for_ship(void)
 #endif
 }
 
-static void boss_init_all_segments(const object &boss_objnum)
+static void boss_init_all_segments(const segment_array &Segments, const object &boss_objnum)
 {
+	auto &Boss_gate_segs = LevelSharedBossState.Gate_segs;
+	auto &Boss_teleport_segs = LevelSharedBossState.Teleport_segs;
 	if (!Boss_teleport_segs.empty())
 		return;	// already have boss segs
 
@@ -513,6 +511,7 @@ void init_ai_object(vmobjptridx_t objp, ai_behavior behavior, const imsegidx_t h
 		ailp->mode = ai_behavior_to_mode(aip->behavior);
 	}
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(objp)];
 #if defined(DXX_BUILD_DESCENT_II)
 	if (robot_is_companion(robptr)) {
@@ -572,13 +571,15 @@ void init_ai_object(vmobjptridx_t objp, ai_behavior behavior, const imsegidx_t h
 		Last_gate_time = 0;
 		Last_teleport_time = 0;
 		Boss_cloak_start_time = 0;
-		boss_init_all_segments(objp);
+		boss_init_all_segments(Segments, objp);
 	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 void init_ai_objects(void)
 {
+	auto &Boss_gate_segs = LevelSharedBossState.Gate_segs;
+	auto &Boss_teleport_segs = LevelSharedBossState.Teleport_segs;
 	Point_segs_free_ptr = Point_segs.begin();
 	Boss_gate_segs.clear();
 	Boss_teleport_segs.clear();
@@ -639,6 +640,7 @@ void ai_turn_towards_vector(const vms_vector &goal_vector, object_base &objp, fi
 		}
 	}
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if (Seismic_tremor_magnitude) {
 		fix			scale;
 		scale = fixdiv(2*Seismic_tremor_magnitude, Robot_info[get_robot_id(objp)].mass);
@@ -706,11 +708,12 @@ int player_is_visible_from_object(const vmobjptridx_t objp, vms_vector &pos, fix
 
 	fq.p0						= &pos;
 	if ((pos.x != objp->pos.x) || (pos.y != objp->pos.y) || (pos.z != objp->pos.z)) {
-		const auto &&segnum = find_point_seg(pos, vmsegptridx(objp->segnum));
+		auto &Segments = LevelSharedSegmentState.get_segments();
+		const auto &&segnum = find_point_seg(LevelSharedSegmentState, pos, Segments.vcptridx(objp->segnum));
 		if (segnum == segment_none) {
 			fq.startseg = objp->segnum;
 			pos = objp->pos;
-			move_towards_segment_center(objp);
+			move_towards_segment_center(LevelSharedSegmentState, objp);
 		} else
 		{
 #if defined(DXX_BUILD_DESCENT_II)
@@ -767,6 +770,8 @@ static int do_silly_animation(object &objp)
 	int				flinch_attack_scale = 1;
 
 	robot_type = get_robot_id(objp);
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+	auto &Robot_joints = LevelSharedRobotJointState.Robot_joints;
 	auto &robptr = Robot_info[robot_type];
 	num_guns = robptr.n_guns;
 	attack_type = robptr.attack_type;
@@ -785,6 +790,7 @@ static int do_silly_animation(object &objp)
 		flinch_attack_scale = Flinch_scale;
 
 	at_goal = 1;
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	for (gun_num=0; gun_num <= num_guns; gun_num++) {
 		const auto &&ras = robot_get_anim_state(Robot_info, Robot_joints, robot_type, gun_num, robot_state);
 
@@ -836,6 +842,7 @@ static void ai_frame_animation(object &objp)
 {
 	int	joint;
 	auto &pobj_info = objp.rtype.pobj_info;
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	const auto num_joints = Polygon_models[pobj_info.model_num].n_models;
 	const auto &ail = objp.ctype.ai_info.ail;
 	for (joint=1; joint<num_joints; joint++) {
@@ -901,6 +908,7 @@ static void set_next_fire_time(const vmobjptr_t objp, ai_local &ailp, const robo
 void do_ai_robot_hit_attack(const vmobjptridx_t robot, const vmobjptridx_t playerobj, const vms_vector &collision_point)
 {
 	ai_local &ailp = robot->ctype.ai_info.ail;
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(robot)];
 
 //#ifndef NDEBUG
@@ -981,6 +989,7 @@ static int lead_player(const object_base &objp, const vms_vector &fire_point, co
 		return 0;
 
 	//	Looks like it might be worth trying to lead the player.
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	const auto weapon_type = get_robot_weapon(Robot_info[get_robot_id(objp)], gun_num);
 
 	const weapon_info *const wptr = &Weapon_info[weapon_type];
@@ -1026,7 +1035,7 @@ static int lead_player(const object_base &objp, const vms_vector &fire_point, co
 //	Note: Parameter vec_to_player is only passed now because guns which aren't on the forward vector from the
 //	center of the robot will not fire right at the player.  We need to aim the guns at the player.  Barring that, we cheat.
 //	When this routine is complete, the parameter vec_to_player should not be necessary.
-static void ai_fire_laser_at_player(segment_array &segments, const vmobjptridx_t obj, const player_info &player_info, const vms_vector &fire_point, const int gun_num
+static void ai_fire_laser_at_player(const d_level_shared_segment_state &LevelSharedSegmentState, const vmobjptridx_t obj, const player_info &player_info, const vms_vector &fire_point, const int gun_num
 #if defined(DXX_BUILD_DESCENT_II)
 									, const vms_vector &believed_player_pos
 #endif
@@ -1034,6 +1043,7 @@ static void ai_fire_laser_at_player(segment_array &segments, const vmobjptridx_t
 {
 	const auto powerup_flags = player_info.powerup_flags;
 	ai_local &ailp = obj->ctype.ai_info.ail;
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(obj)];
 	vms_vector	fire_vec;
 	vms_vector	bpp_diff;
@@ -1051,8 +1061,6 @@ static void ai_fire_laser_at_player(segment_array &segments, const vmobjptridx_t
 		return;
 
 #if defined(DXX_BUILD_DESCENT_II)
-	auto &vmsegptridx = segments.vmptridx;
-	auto &vcsegptr = segments.vcptr;
 	//	If this robot is only awake because a camera woke it up, don't fire.
 	if (obj->ctype.ai_info.SUB_FLAGS & SUB_FLAGS_CAMERA_AWAKE)
 		return;
@@ -1078,7 +1086,7 @@ static void ai_fire_laser_at_player(segment_array &segments, const vmobjptridx_t
 	}
 
 #if defined(DXX_BUILD_DESCENT_I)
-	(void)segments;
+	(void)LevelSharedSegmentState;
 	//	Set position to fire at based on difficulty level.
 	bpp_diff.x = Believed_player_pos.x + (d_rand()-16384) * (NDL-Difficulty_level-1) * 4;
 	bpp_diff.y = Believed_player_pos.y + (d_rand()-16384) * (NDL-Difficulty_level-1) * 4;
@@ -1103,6 +1111,8 @@ static void ai_fire_laser_at_player(segment_array &segments, const vmobjptridx_t
 		}
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	//	Handle problem of a robot firing through a wall because its gun tip is on the other
 	//	side of the wall than the robot's center.  For speed reasons, we normally only compute
 	//	the vector from the gun point to the player.  But we need to know whether the gun point
@@ -1110,16 +1120,17 @@ static void ai_fire_laser_at_player(segment_array &segments, const vmobjptridx_t
 	if (obj->ctype.ai_info.SUB_FLAGS & SUB_FLAGS_GUNSEG) {
 		//	Well, the gun point is in a different segment than the robot's center.
 		//	This is almost always ok, but it is not ok if something solid is in between.
-		const auto &&gun_segnum = find_point_seg(fire_point, vmsegptridx(obj->segnum));
-
 		//	See if these segments are connected, which should almost always be the case.
-		const auto &&csegp = vcsegptr(obj->segnum);
+		auto &Segments = LevelSharedSegmentState.get_segments();
+		const auto &&csegp = Segments.vcptridx(obj->segnum);
+		const auto &&gun_segnum = find_point_seg(LevelSharedSegmentState, fire_point, csegp);
 		const auto conn_side = find_connect_side(gun_segnum, csegp);
 		if (conn_side != side_none)
 		{
 			//	They are connected via conn_side in segment obj->segnum.
 			//	See if they are unobstructed.
-			if (!(WALL_IS_DOORWAY(csegp, conn_side) & WID_FLY_FLAG)) {
+			if (!(WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, csegp, csegp, conn_side) & WID_FLY_FLAG))
+			{
 				//	Can't fly through, so don't let this bot fire through!
 				return;
 			}
@@ -1140,7 +1151,7 @@ static void ai_fire_laser_at_player(segment_array &segments, const vmobjptridx_t
 			fate = find_vector_intersection(fq, hit_data);
 			if (fate != HIT_NONE) {
 				Int3();		//	This bot's gun is poking through a wall, so don't fire.
-				move_towards_segment_center(obj);		//	And decrease chances it will happen again.
+				move_towards_segment_center(LevelSharedSegmentState, obj);		//	And decrease chances it will happen again.
 				return;
 			}
 		}
@@ -1209,6 +1220,7 @@ player_led: ;
 static void move_towards_vector(object_base &objp, const vms_vector &vec_goal, int dot_based)
 {
 	auto &velocity = objp.mtype.phys_info.velocity;
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(objp)];
 
 	//	Trying to move towards player.  If forward vector much different than velocity vector,
@@ -1307,6 +1319,7 @@ static void move_around_player(const vmobjptridx_t objp, const player_flags powe
 	evade_vector.y = fixmul(evade_vector.y, frametime32);
 	evade_vector.z = fixmul(evade_vector.z, frametime32);
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(objp)];
 	//	Note: -1 means normal circling about the player.  > 0 means fast evasion.
 	if (fast_flag > 0) {
@@ -1363,6 +1376,7 @@ static void move_away_from_player(const vmobjptridx_t objp, const vms_vector &ve
 
 	auto speed = vm_vec_mag_quick(pptr->velocity);
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(objp)];
 	if (speed > robptr.max_speed[Difficulty_level])
 	{
@@ -1379,6 +1393,7 @@ static void move_away_from_player(const vmobjptridx_t objp, const vms_vector &ve
 //	If the flag evade_only is set, then only allowed to evade, not allowed to move otherwise (must have mode == AIM_STILL).
 static void ai_move_relative_to_player(const vmobjptridx_t objp, ai_local &ailp, fix dist_to_player, const vms_vector &vec_to_player, fix circle_distance, int evade_only, int player_visibility, const player_info &player_info)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(objp)];
 
 	(void)player_visibility;	// only used for Assert
@@ -1563,14 +1578,11 @@ void do_ai_robot_hit(const vmobjptridx_t objp, player_awareness_type_t type)
 				{
 					int	r;
 
-					//	Attack robots (eg, green guy) shouldn't have behavior = still.
-					Assert(Robot_info[get_robot_id(objp)].attack_type == 0);
-
 					r = d_rand();
 					//	1/8 time, charge player, 1/4 time create path, rest of time, do nothing
 					ai_local		*ailp = &objp->ctype.ai_info.ail;
 					if (r < 4096) {
-						create_path_to_player(objp, 10, 1);
+						create_path_to_player(objp, 10, create_path_safety_flag::safe);
 						objp->ctype.ai_info.behavior = ai_behavior::AIB_STATION;
 						objp->ctype.ai_info.hide_segment = objp->segnum;
 						ailp->mode = ai_mode::AIM_CHASE_OBJECT;
@@ -1689,23 +1701,24 @@ static void compute_vis_and_vec(fvmsegptridx &vmsegptridx, const vmobjptridx_t o
 			ailp.time_player_seen = GameTime64;
 		}
 	}
-
 }
 
 // --------------------------------------------------------------------------------------------------------------------
 //	Move object one object radii from current position towards segment center.
 //	If segment center is nearer than 2 radii, move it to center.
-void move_towards_segment_center(const vmobjptr_t objp)
+void move_towards_segment_center(const d_level_shared_segment_state &LevelSharedSegmentState, object_base &objp)
 {
 /* ZICO's change of 20081103:
    Make move to segment center smoother by using move_towards vector.
    Bot's should not jump around and maybe even intersect with each other!
    In case it breaks something what I do not see, yet, old code is still there. */
-	auto segnum = objp->segnum;
+	const auto segnum = objp.segnum;
 	vms_vector	vec_to_center;
 
-	const auto &&segment_center = compute_segment_center(vcvertptr, vcsegptr(segnum));
-	vm_vec_normalized_dir_quick(vec_to_center, segment_center, objp->pos);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &SSegments = LevelSharedSegmentState.get_segments();
+	const auto &&segment_center = compute_segment_center(Vertices.vcptr, SSegments.vcptr(segnum));
+	vm_vec_normalized_dir_quick(vec_to_center, segment_center, objp.pos);
 	move_towards_vector(objp, vec_to_center, 1);
 }
 
@@ -1718,20 +1731,22 @@ int ai_door_is_openable(
 #if defined(DXX_BUILD_DESCENT_II)
 	const player_flags powerup_flags,
 #endif
-	const vcsegptr_t segp, const int sidenum)
+	const shared_segment &segp, const unsigned sidenum)
 {
-	if (!IS_CHILD(segp->children[sidenum]))
+	if (!IS_CHILD(segp.children[sidenum]))
 		return 0;		//trap -2 (exit side)
 
-	auto wall_num = segp->sides[sidenum].wall_num;
+	const auto wall_num = segp.sides[sidenum].wall_num;
 
 	if (wall_num == wall_none)		//if there's no door at all...
 		return 0;				//..then say it can't be opened
 
-	const auto &&wallp = vcwallptr(wall_num);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	auto &wall = *vcwallptr(wall_num);
 	//	The mighty console object can open all doors (for purposes of determining paths).
 	if (objp == ConsoleObject) {
-		const auto wt = wallp->type;
+		const auto wt = wall.type;
 		if (wt == WALL_DOOR)
 		{
 			static_assert(WALL_DOOR != 0, "WALL_DOOR must be nonzero for this shortcut to work properly.");
@@ -1745,8 +1760,8 @@ int ai_door_is_openable(
 
 		if (wall_num != wall_none)
 		{
-			const auto wt = wallp->type;
-			if (wt == WALL_DOOR && wallp->keys == KEY_NONE && !(wallp->flags & WALL_DOOR_LOCKED))
+			const auto wt = wall.type;
+			if (wt == WALL_DOOR && wall.keys == KEY_NONE && !(wall.flags & WALL_DOOR_LOCKED))
 			{
 				static_assert(WALL_DOOR != 0, "WALL_DOOR must be nonzero for this shortcut to work properly.");
 				return wt;
@@ -1754,18 +1769,19 @@ int ai_door_is_openable(
 		}
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if (Robot_info[get_robot_id(objp)].companion)
 	{
-		const auto wt = wallp->type;
-		if (wallp->flags & WALL_BUDDY_PROOF) {
-			if (wt == WALL_DOOR && wallp->state == WALL_DOOR_CLOSED)
+		const auto wt = wall.type;
+		if (wall.flags & WALL_BUDDY_PROOF) {
+			if (wt == WALL_DOOR && wall.state == WALL_DOOR_CLOSED)
 				return 0;
 			else if (wt == WALL_CLOSED)
 				return 0;
-			else if (wt == WALL_ILLUSION && !(wallp->flags & WALL_ILLUSION_OFF))
+			else if (wt == WALL_ILLUSION && !(wall.flags & WALL_ILLUSION_OFF))
 				return 0;
 		}
-		switch (const auto wall_keys = wallp->keys)
+		switch (const auto wall_keys = wall.keys)
 		{
 				case KEY_BLUE:
 				case KEY_GOLD:
@@ -1787,51 +1803,51 @@ int ai_door_is_openable(
 
 		// -- if (Buddy_got_stuck) {
 		if (ailp_mode == ai_mode::AIM_GOTO_PLAYER) {
-			if (wt == WALL_BLASTABLE && wallp->state != WALL_BLASTED)
+			if (wt == WALL_BLASTABLE && wall.state != WALL_BLASTED)
 				return 0;
 			if (wt == WALL_CLOSED)
 				return 0;
 			if (wt == WALL_DOOR) {
-				if ((wallp->flags & WALL_DOOR_LOCKED) && (wallp->state == WALL_DOOR_CLOSED))
+				if ((wall.flags & WALL_DOOR_LOCKED) && (wall.state == WALL_DOOR_CLOSED))
 					return 0;
 			}
 		}
 		// -- }
 
-		if ((ailp_mode != ai_mode::AIM_GOTO_PLAYER) && (wallp->controlling_trigger != -1)) {
-			const auto clip_num = wallp->clip_num;
+		if ((ailp_mode != ai_mode::AIM_GOTO_PLAYER) && (wall.controlling_trigger != -1)) {
+			const auto clip_num = wall.clip_num;
 			if (clip_num == -1)
 				return clip_num;
 			else if (WallAnims[clip_num].flags & WCF_HIDDEN) {
 				static_assert(WALL_DOOR_CLOSED == 0, "WALL_DOOR_CLOSED must be zero for this shortcut to work properly.");
-				return wallp->state;
+				return wall.state;
 			} else
 				return 1;
 		}
 
 		if (wt == WALL_DOOR)  {
-				const auto clip_num = wallp->clip_num;
+				const auto clip_num = wall.clip_num;
 
 				if (clip_num == -1)
 					return clip_num;
 				//	Buddy allowed to go through secret doors to get to player.
 				else if ((ailp_mode != ai_mode::AIM_GOTO_PLAYER) && (WallAnims[clip_num].flags & WCF_HIDDEN)) {
 					static_assert(WALL_DOOR_CLOSED == 0, "WALL_DOOR_CLOSED must be zero for this shortcut to work properly.");
-					return wallp->state;
+					return wall.state;
 				} else
 					return 1;
 		}
 	} else if ((get_robot_id(objp) == ROBOT_BRAIN) || (objp->ctype.ai_info.behavior == ai_behavior::AIB_RUN_FROM) || (objp->ctype.ai_info.behavior == ai_behavior::AIB_SNIPE)) {
 		if (wall_num != wall_none)
 		{
-			const auto wt = wallp->type;
-			if (wt == WALL_DOOR && (wallp->keys == KEY_NONE) && !(wallp->flags & WALL_DOOR_LOCKED))
+			const auto wt = wall.type;
+			if (wt == WALL_DOOR && (wall.keys == KEY_NONE) && !(wall.flags & WALL_DOOR_LOCKED))
 			{
 				static_assert(WALL_DOOR != 0, "WALL_DOOR must be nonzero for this shortcut to work properly.");
 				return wt;
 			}
-			else if (wallp->keys != KEY_NONE) {	//	Allow bots to open doors to which player has keys.
-				return powerup_flags & static_cast<PLAYER_FLAG>(wallp->keys);
+			else if (wall.keys != KEY_NONE) {	//	Allow bots to open doors to which player has keys.
+				return powerup_flags & static_cast<PLAYER_FLAG>(wall.keys);
 			}
 		}
 	}
@@ -1841,12 +1857,13 @@ int ai_door_is_openable(
 
 //	-----------------------------------------------------------------------------------------------------------
 //	Return side of openable door in segment, if any.  If none, return side_none.
-static unsigned openable_doors_in_segment(fvcwallptr &vcwallptr, const segment &segp)
+static unsigned openable_doors_in_segment(fvcwallptr &vcwallptr, const shared_segment &segp)
 {
 	int	i;
 	for (i=0; i<MAX_SIDES_PER_SEGMENT; i++) {
-		if (segp.sides[i].wall_num != wall_none) {
-			const auto wall_num = segp.sides[i].wall_num;
+		const auto wall_num = segp.sides[i].wall_num;
+		if (wall_num != wall_none)
+		{
 			auto &w = *vcwallptr(wall_num);
 #if defined(DXX_BUILD_DESCENT_I)
 			if (w.type == WALL_DOOR && w.keys == KEY_NONE && w.state == WALL_DOOR_CLOSED && !(w.flags & WALL_DOOR_LOCKED))
@@ -1861,10 +1878,10 @@ static unsigned openable_doors_in_segment(fvcwallptr &vcwallptr, const segment &
 
 // --------------------------------------------------------------------------------------------------------------------
 //	Return true if placing an object of size size at pos *pos intersects a (player or robot or control center) in segment *segp.
-static int check_object_object_intersection(const vms_vector &pos, fix size, const vcsegptr_t segp)
+static int check_object_object_intersection(const vms_vector &pos, fix size, const unique_segment &segp)
 {
 	//	If this would intersect with another object (only check those in this segment), then try to move.
-	range_for (const auto curobjp, objects_in(*segp, vcobjptridx, vcsegptr))
+	range_for (const auto curobjp, objects_in(segp, vcobjptridx, vcsegptr))
 	{
 		if ((curobjp->type == OBJ_PLAYER) || (curobjp->type == OBJ_ROBOT) || (curobjp->type == OBJ_CNTRLCEN)) {
 			if (vm_vec_dist_quick(pos, curobjp->pos) < size + curobjp->size)
@@ -1877,7 +1894,7 @@ static int check_object_object_intersection(const vms_vector &pos, fix size, con
 // --------------------------------------------------------------------------------------------------------------------
 //	Return objnum if object created, else return -1.
 //	If pos == NULL, pick random spot in segment.
-static imobjptridx_t create_gated_robot(fvcobjptr &vcobjptr, const vmsegptridx_t segp, int object_id, const vms_vector *pos)
+static imobjptridx_t create_gated_robot(const d_vclip_array &Vclip, fvcobjptr &vcobjptr, const vmsegptridx_t segp, int object_id, const vms_vector *pos)
 {
 #if defined(DXX_BUILD_DESCENT_I)
 	const unsigned maximum_gated_robots = 2*Difficulty_level + 3;
@@ -1890,8 +1907,9 @@ static imobjptridx_t create_gated_robot(fvcobjptr &vcobjptr, const vmsegptridx_t
 	unsigned count = 0;
 	range_for (const auto &&objp, vcobjptr)
 	{
-		if (objp->type == OBJ_ROBOT)
-			if (objp->matcen_creator == BOSS_GATE_MATCEN_NUM)
+		auto &obj = *objp;
+		if (obj.type == OBJ_ROBOT)
+			if (obj.matcen_creator == BOSS_GATE_MATCEN_NUM)
 				count++;
 	}
 
@@ -1901,10 +1919,14 @@ static imobjptridx_t create_gated_robot(fvcobjptr &vcobjptr, const vmsegptridx_t
 		return object_none;
 	}
 
-	const auto object_pos = pos ? *pos : pick_random_point_in_seg(segp);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	const auto object_pos = pos ? *pos : pick_random_point_in_seg(vcvertptr, segp);
 
 	//	See if legal to place object here.  If not, move about in segment and try again.
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[object_id];
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	const fix objsize = Polygon_models[robptr.model_num].rad;
 	if (check_object_object_intersection(object_pos, objsize, segp)) {
 		Last_gate_time = GameTime64 - 3*Gate_interval/4;
@@ -1964,32 +1986,40 @@ static imobjptridx_t create_gated_robot(fvcobjptr &vcobjptr, const vmsegptridx_t
 //	Return objnum if robot successfully created, else return -1
 imobjptridx_t gate_in_robot(int type, const vmsegptridx_t segnum)
 {
-	return create_gated_robot(vcobjptr, segnum, type, NULL);
+	return create_gated_robot(Vclip, vcobjptr, segnum, type, NULL);
 }
 
 static imobjptridx_t gate_in_robot(fvmsegptridx &vmsegptridx, int type)
 {
+	auto &Boss_gate_segs = LevelSharedBossState.Gate_segs;
 	auto segnum = Boss_gate_segs[(d_rand() * Boss_gate_segs.size()) >> 15];
 	return gate_in_robot(type, vmsegptridx(segnum));
 }
 
-// --------------------------------------------------------------------------------------------------------------------
-static int boss_fits_in_seg(const object &boss_objp, const vcsegptridx_t segp)
+}
+
+namespace dcx {
+
+static const shared_segment *boss_intersects_wall(fvcvertptr &vcvertptr, const object_base &boss_objp, const vcsegptridx_t segp)
 {
 	const auto size = boss_objp.size;
 	const auto &&segcenter = compute_segment_center(vcvertptr, segp);
 	auto pos = segcenter;
 	for (uint_fast32_t posnum = 0;;)
 	{
-		if (!sphere_intersects_wall(pos, segp, size, nullptr))
-			return 1;
+		const auto seg = sphere_intersects_wall(vcvertptr, pos, segp, size).seg;
+		if (!seg)
+			return seg;
 		if (posnum == segp->verts.size())
-			break;
+			return seg;
 		auto &vertex_pos = *vcvertptr(segp->verts[posnum ++]);
 		vm_vec_avg(pos, vertex_pos, segcenter);
 	}
-	return 0;
 }
+
+}
+
+namespace dsx {
 
 #if defined(DXX_BUILD_DESCENT_II)
 // --------------------------------------------------------------------------------------------------------------------
@@ -1999,21 +2029,22 @@ static int boss_fits_in_seg(const object &boss_objp, const vcsegptridx_t segp)
 void create_buddy_bot(void)
 {
 	int	buddy_id;
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	for (buddy_id=0;; buddy_id++)
 	{
-		if (!(buddy_id < N_robot_types))
+		if (!(buddy_id < LevelSharedRobotInfoState.N_robot_types))
 			return;
 		const robot_info &robptr = Robot_info[buddy_id];
 		if (robptr.companion)
 			break;
 	}
 	const auto &&segp = vmsegptridx(ConsoleObject->segnum);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	const auto &&object_pos = compute_segment_center(vcvertptr, segp);
 	create_morph_robot(segp, object_pos, buddy_id);
 }
 #endif
-
-#define	QUEUE_SIZE	256
 
 // --------------------------------------------------------------------------------------------------------------------
 //	Create list of segments boss is allowed to teleport to at imsegptr.
@@ -2022,9 +2053,10 @@ void create_buddy_bot(void)
 //	he can reach from his initial position (calls find_connected_distance).
 //	If size_check is set, then only add segment if boss can fit in it, else any segment is legal.
 //	one_wall_hack added by MK, 10/13/95: A mega-hack!  Set to !0 to ignore the 
-static void init_boss_segments(segment_array &segments, const object &boss_objp, boss_special_segment_array_t &a, const int size_check, int one_wall_hack)
+static void init_boss_segments(const segment_array &segments, const object &boss_objp, d_level_shared_boss_state::special_segment_array_t &a, const int size_check, int one_wall_hack)
 {
-	auto &vmsegptridx = segments.vmptridx;
+	constexpr unsigned QUEUE_SIZE = 256;
+	auto &vcsegptridx = segments.vcptridx;
 	auto &vmsegptr = segments.vmptr;
 #if defined(DXX_BUILD_DESCENT_I)
 	one_wall_hack = 0;
@@ -2035,7 +2067,9 @@ static void init_boss_segments(segment_array &segments, const object &boss_objp,
 	Selected_segs.clear();
 #endif
 
-	assert(boss_objp.type == OBJ_ROBOT && Robot_info[get_robot_id(boss_objp)].boss_flag);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	{
 		int			head, tail;
 		array<segnum_t, QUEUE_SIZE> seg_queue;
@@ -2044,8 +2078,9 @@ static void init_boss_segments(segment_array &segments, const object &boss_objp,
 		head = 0;
 		tail = 0;
 		seg_queue[head++] = original_boss_seg;
+		auto &vcvertptr = Vertices.vcptr;
 
-		if ((!size_check) || boss_fits_in_seg(boss_objp, vmsegptridx(original_boss_seg)))
+		if (!size_check || !boss_intersects_wall(vcvertptr, boss_objp, vcsegptridx(original_boss_seg)))
 		{
 			a.emplace_back(original_boss_seg);
 #if DXX_USE_EDITOR
@@ -2057,15 +2092,15 @@ static void init_boss_segments(segment_array &segments, const object &boss_objp,
 
 		while (tail != head) {
 			int		sidenum;
-			const auto &&segp = vmsegptr(seg_queue[tail++]);
+			auto &segp = *vmsegptr(seg_queue[tail++]);
 
 			tail &= QUEUE_SIZE-1;
 
 			for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++) {
-				auto w = WALL_IS_DOORWAY(segp, sidenum);
+				const auto w = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, sidenum);
 				if ((w & WID_FLY_FLAG) || one_wall_hack)
 				{
-					const auto csegnum = segp->children[sidenum];
+					const auto csegnum = segp.children[sidenum];
 #if defined(DXX_BUILD_DESCENT_II)
 					//	If we get here and w == WID_WALL, then we want to process through this wall, else not.
 					if (IS_CHILD(csegnum)) {
@@ -2090,7 +2125,7 @@ static void init_boss_segments(segment_array &segments, const object &boss_objp,
 							if (head+QUEUE_SIZE == tail + QUEUE_SIZE-1)
 								Int3();	//	queue overflow.  Make it bigger!
 	
-						if (!size_check || boss_fits_in_seg(boss_objp, vmsegptridx(csegnum))) {
+						if (!size_check || !boss_intersects_wall(vcvertptr, boss_objp, vcsegptridx(csegnum))) {
 							a.emplace_back(csegnum);
 #if DXX_USE_EDITOR
 							Selected_segs.emplace_back(csegnum);
@@ -2113,8 +2148,9 @@ static void init_boss_segments(segment_array &segments, const object &boss_objp,
 }
 
 // --------------------------------------------------------------------------------------------------------------------
-static void teleport_boss(fvmsegptridx &vmsegptridx, const vmobjptridx_t objp, const vms_vector &target_pos)
+static void teleport_boss(const d_vclip_array &Vclip, fvmsegptridx &vmsegptridx, const vmobjptridx_t objp, const vms_vector &target_pos)
 {
+	auto &Boss_teleport_segs = LevelSharedBossState.Teleport_segs;
 	segnum_t			rand_segnum;
 	int			rand_index;
 	assert(!Boss_teleport_segs.empty());
@@ -2128,6 +2164,8 @@ static void teleport_boss(fvmsegptridx &vmsegptridx, const vmobjptridx_t objp, c
 		multi_send_boss_teleport(objp, rand_segnum);
 
 	const auto &&rand_segp = vmsegptridx(rand_segnum);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	compute_segment_center(vcvertptr, objp->pos, rand_segp);
 	obj_relink(vmobjptr, vmsegptr, objp, rand_segp);
 
@@ -2153,6 +2191,7 @@ static void teleport_boss(fvmsegptridx &vmsegptridx, const vmobjptridx_t objp, c
 //	----------------------------------------------------------------------
 void start_boss_death_sequence(const vmobjptr_t objp)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(objp)];
 	if (robptr.boss_flag)
 	{
@@ -2198,16 +2237,18 @@ imobjptridx_t boss_spew_robot(const object_base &objp, const vms_vector &pos)
 {
 	int		boss_index;
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	boss_index = Robot_info[get_robot_id(objp)].boss_flag - BOSS_D2;
 
 	Assert((boss_index >= 0) && (boss_index < NUM_D2_BOSSES));
 
-	const auto &&segnum = find_point_seg(pos, vmsegptridx(objp.segnum));
+	auto &Segments = LevelUniqueSegmentState.get_segments();
+	const auto &&segnum = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, pos, Segments.vmptridx(objp.segnum));
 	if (segnum == segment_none) {
 		return object_none;
 	}	
 
-	const auto &&newobjp = create_gated_robot(vcobjptr, segnum, Spew_bots[boss_index][(Max_spew_bots[boss_index] * d_rand()) >> 15], &pos);
+	const auto &&newobjp = create_gated_robot(Vclip, vcobjptr, segnum, Spew_bots[boss_index][(Max_spew_bots[boss_index] * d_rand()) >> 15], &pos);
  
 	//	Make spewed robot come tumbling out as if blasted by a flash missile.
 	if (newobjp != object_none) {
@@ -2281,6 +2322,7 @@ static void do_boss_dying_frame(const vmobjptridx_t objp)
 {
 	int	rval;
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	rval = do_robot_dying_frame(objp, Boss_dying_start_time, BOSS_DEATH_DURATION, &Boss_dying_sound_playing, Robot_info[get_robot_id(objp)].deathroll_sound, F1_0*4, F1_0*4);
 
 	if (rval)
@@ -2295,6 +2337,7 @@ static void do_boss_dying_frame(const vmobjptridx_t objp)
 //	----------------------------------------------------------------------
 static int do_any_robot_dying_frame(const vmobjptridx_t objp)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if (objp->ctype.ai_info.dying_start_time) {
 		int	rval, death_roll;
 
@@ -2373,7 +2416,7 @@ static void do_d1_boss_stuff(fvmsegptridx &vmsegptridx, const vmobjptridx_t objp
 				GameTime64 - Last_teleport_time > Boss_teleport_interval)
 			{
 				if (ai_multiplayer_awareness(objp, 98))
-					teleport_boss(vmsegptridx, objp, get_local_plrobj().pos);
+					teleport_boss(Vclip, vmsegptridx, objp, get_local_plrobj().pos);
 			} else if (Boss_hit_this_frame) {
 				Boss_hit_this_frame = 0;
 				Last_teleport_time -= Boss_teleport_interval/4;
@@ -2437,7 +2480,6 @@ static void do_super_boss_stuff(fvmsegptridx &vmsegptridx, const vmobjptridx_t o
 
 				Assert(randtype < MAX_GATE_INDEX);
 				randtype = Super_boss_gate_list[randtype];
-				Assert(randtype < N_robot_types);
 
 				const auto &&rtval = gate_in_robot(vmsegptridx, randtype);
 				if (rtval != object_none && (Game_mode & GM_MULTI))
@@ -2453,6 +2495,7 @@ static void do_d2_boss_stuff(fvmsegptridx &vmsegptridx, const vmobjptridx_t objp
 {
 	int	boss_id, boss_index;
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	boss_id = Robot_info[get_robot_id(objp)].boss_flag;
 
 	Assert((boss_id >= BOSS_D2) && (boss_id < BOSS_D2 + NUM_D2_BOSSES));
@@ -2479,7 +2522,7 @@ static void do_d2_boss_stuff(fvmsegptridx &vmsegptridx, const vmobjptridx_t objp
 				GameTime64 - Last_teleport_time > Boss_teleport_interval)
 			{
 				if (ai_multiplayer_awareness(objp, 98))
-					teleport_boss(vmsegptridx, objp, get_local_plrobj().pos);
+					teleport_boss(Vclip, vmsegptridx, objp, get_local_plrobj().pos);
 			} else if (GameTime64 - Boss_hit_time > F1_0*2) {
 				Last_teleport_time -= Boss_teleport_interval/4;
 			}
@@ -2558,7 +2601,7 @@ static void ai_do_actual_firing_stuff(fvmobjptridx &vmobjptridx, const vmobjptri
 						} else {
 							if (!ai_multiplayer_awareness(obj, ROBOT_FIRE_AGITATION))
 								return;
-							ai_fire_laser_at_player(Segments, obj, player_info, gun_point, 0);
+							ai_fire_laser_at_player(LevelSharedSegmentState, obj, player_info, gun_point, 0);
 						}
 					}
 
@@ -2583,7 +2626,7 @@ static void ai_do_actual_firing_stuff(fvmobjptridx &vmobjptridx, const vmobjptri
 			&& (vm_vec_dist_quick(Hit_pos, obj->pos) > F1_0*40)) {
 			if (!ai_multiplayer_awareness(obj, ROBOT_FIRE_AGITATION))
 				return;
-			ai_fire_laser_at_player(Segments, obj, player_info, gun_point, 0);
+			ai_fire_laser_at_player(LevelSharedSegmentState, obj, player_info, gun_point, 0);
 
 			aip->GOAL_STATE = AIS_RECO;
 			ailp.goal_state[aip->CURRENT_GUN] = AIS_RECO;
@@ -2609,6 +2652,7 @@ static void ai_do_actual_firing_stuff(fvmobjptridx &vmobjptridx, const vmobjptri
 {
 	fix	dot;
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if ((player_visibility == 2) || (Dist_to_last_fired_upon_player_pos < FIRE_AT_NEARBY_PLAYER_THRESHOLD )) {
 		vms_vector	fire_pos;
 
@@ -2644,13 +2688,13 @@ static void ai_do_actual_firing_stuff(fvmobjptridx &vmobjptridx, const vmobjptri
 								return;
 							//	New, multi-weapon-type system, 06/05/95 (life is slipping away...)
 							if (ready_to_fire_weapon1(ailp, 0)) {
-								ai_fire_laser_at_player(Segments, obj, player_info, gun_point, gun_num, fire_pos);
+								ai_fire_laser_at_player(LevelSharedSegmentState, obj, player_info, gun_point, gun_num, fire_pos);
 								Last_fired_upon_player_pos = fire_pos;
 							}
 							if (gun_num != 0) {
 								if (ready_to_fire_weapon2(robptr, ailp, 0)) {
 									calc_gun_point(gun_point, obj, 0);
-									ai_fire_laser_at_player(Segments, obj, player_info, gun_point, 0, fire_pos);
+									ai_fire_laser_at_player(LevelSharedSegmentState, obj, player_info, gun_point, 0, fire_pos);
 									Last_fired_upon_player_pos = fire_pos;
 								}
 							}
@@ -2690,7 +2734,7 @@ static void ai_do_actual_firing_stuff(fvmobjptridx &vmobjptridx, const vmobjptri
 			 && (vm_vec_dist_quick(Hit_pos, obj->pos) > F1_0*40)) {
 			if (!ai_multiplayer_awareness(obj, ROBOT_FIRE_AGITATION))
 				return;
-			ai_fire_laser_at_player(Segments, obj, player_info, gun_point, gun_num, Believed_player_pos);
+			ai_fire_laser_at_player(LevelSharedSegmentState, obj, player_info, gun_point, gun_num, Believed_player_pos);
 
 			aip->GOAL_STATE = AIS_RECO;
 			ailp.goal_state[aip->CURRENT_GUN] = AIS_RECO;
@@ -2732,13 +2776,13 @@ static void ai_do_actual_firing_stuff(fvmobjptridx &vmobjptridx, const vmobjptri
 							//	New, multi-weapon-type system, 06/05/95 (life is slipping away...)
 							if (ready_to_fire_weapon1(ailp, 0))
 							{
-								ai_fire_laser_at_player(Segments, obj, player_info, gun_point, gun_num, Last_fired_upon_player_pos);
+								ai_fire_laser_at_player(LevelSharedSegmentState, obj, player_info, gun_point, gun_num, Last_fired_upon_player_pos);
 							}
 							if (gun_num != 0) {
 
 								if (ready_to_fire_weapon2(robptr, ailp, 0)) {
 									calc_gun_point(gun_point, obj, 0);
-									ai_fire_laser_at_player(Segments, obj, player_info, gun_point, 0, Last_fired_upon_player_pos);
+									ai_fire_laser_at_player(LevelSharedSegmentState, obj, player_info, gun_point, 0, Last_fired_upon_player_pos);
 								}
 							}
 						}
@@ -2795,6 +2839,7 @@ static void make_nearby_robot_snipe(fvmsegptr &vmsegptr, const vmobjptr_t robot,
 	 */
 	const auto bfs_length = create_bfs_list(robot, ConsoleObject->segnum, powerup_flags, bfs_list);
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	range_for (auto &i, partial_const_range(bfs_list, bfs_length)) {
 		range_for (const auto objp, objects_in(vmsegptr(i), vmobjptridx, vmsegptr))
 		{
@@ -2811,7 +2856,7 @@ static void make_nearby_robot_snipe(fvmsegptr &vmsegptr, const vmobjptr_t robot,
 	}
 }
 
-object *Ai_last_missile_camera;
+const object *Ai_last_missile_camera;
 
 static int openable_door_on_near_path(fvcsegptr &vcsegptr, fvcwallptr &vcwallptr, const object &obj, const ai_static &aip)
 {
@@ -2932,6 +2977,10 @@ void do_ai_frame(const vmobjptridx_t obj)
 		return;
 	}
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &Station = LevelUniqueFuelcenterState.Station;
+#endif
 	auto &robptr = Robot_info[get_robot_id(obj)];
 	Assert(robptr.always_0xabcd == 0xabcd);
 
@@ -2976,7 +3025,7 @@ void do_ai_frame(const vmobjptridx_t obj)
 	}
 
 	Assert(obj->segnum != segment_none);
-	Assert(get_robot_id(obj) < N_robot_types);
+	assert(get_robot_id(obj) < LevelSharedRobotInfoState.N_robot_types);
 
 	obj_ref = objnum ^ d_tick_count;
 
@@ -3144,7 +3193,7 @@ _exit_cheat:
 		if (Overall_agitation > 70) {
 			if ((dist_to_player < F1_0*200) && (d_rand() < FrameTime/4)) {
 				if (d_rand() * (Overall_agitation - 40) > F1_0*5) {
-					create_path_to_player(obj, 4 + Overall_agitation/8 + Difficulty_level, 1);
+					create_path_to_player(obj, 4 + Overall_agitation/8 + Difficulty_level, create_path_safety_flag::safe);
 					return;
 				}
 			}
@@ -3165,22 +3214,22 @@ _exit_cheat:
 			switch (ailp.mode) {
 #if defined(DXX_BUILD_DESCENT_II)
 				case ai_mode::AIM_GOTO_PLAYER:
-					move_towards_segment_center(obj);
-					create_path_to_player(obj, 100, 1);
+					move_towards_segment_center(LevelSharedSegmentState, obj);
+					create_path_to_player(obj, 100, create_path_safety_flag::safe);
 					break;
 				case ai_mode::AIM_GOTO_OBJECT:
 					Escort_goal_object = ESCORT_GOAL_UNSPECIFIED;
 					break;
 #endif
 				case ai_mode::AIM_CHASE_OBJECT:
-					create_path_to_player(obj, 4 + Overall_agitation/8 + Difficulty_level, 1);
+					create_path_to_player(obj, 4 + Overall_agitation/8 + Difficulty_level, create_path_safety_flag::safe);
 					break;
 				case ai_mode::AIM_STILL:
 #if defined(DXX_BUILD_DESCENT_I)
 					if (!((aip->behavior == ai_behavior::AIB_STILL) || (aip->behavior == ai_behavior::AIB_STATION)))	//	Behavior is still, so don't follow path.
 #elif defined(DXX_BUILD_DESCENT_II)
 					if (robptr.attack_type)
-						move_towards_segment_center(obj);
+						move_towards_segment_center(LevelSharedSegmentState, obj);
 					else if (!((aip->behavior == ai_behavior::AIB_STILL) || (aip->behavior == ai_behavior::AIB_STATION) || (aip->behavior == ai_behavior::AIB_FOLLOW)))    // Behavior is still, so don't follow path.
 #endif
 						attempt_to_resume_path(obj);
@@ -3192,24 +3241,24 @@ _exit_cheat:
 						attempt_to_resume_path(obj);
 					break;
 				case ai_mode::AIM_RUN_FROM_OBJECT:
-					move_towards_segment_center(obj);
+					move_towards_segment_center(LevelSharedSegmentState, obj);
 					obj->mtype.phys_info.velocity = {};
 					create_n_segment_path(obj, 5, segment_none);
 					ailp.mode = ai_mode::AIM_RUN_FROM_OBJECT;
 					break;
 #if defined(DXX_BUILD_DESCENT_I)
 				case ai_mode::AIM_HIDE:
-					move_towards_segment_center(obj);
+					move_towards_segment_center(LevelSharedSegmentState, obj);
 					obj->mtype.phys_info.velocity = {};
 					if (Overall_agitation > (50 - Difficulty_level*4))
-						create_path_to_player(obj, 4 + Overall_agitation/8, 1);
+						create_path_to_player(obj, 4 + Overall_agitation/8, create_path_safety_flag::safe);
 					else {
 						create_n_segment_path(obj, 5, segment_none);
 					}
 					break;
 #elif defined(DXX_BUILD_DESCENT_II)
 				case ai_mode::AIM_BEHIND:
-					move_towards_segment_center(obj);
+					move_towards_segment_center(LevelSharedSegmentState, obj);
 					obj->mtype.phys_info.velocity = {};
 					break;
 				case ai_mode::AIM_SNIPE_ATTACK:
@@ -3290,7 +3339,7 @@ _exit_cheat:
 						if (dist_to_player < F1_0*30)
 							create_n_segment_path(obj, 5, segment_none);
 						else
-							create_path_to_player(obj, 20, 1);
+							create_path_to_player(obj, 20, create_path_safety_flag::safe);
 					}
 			}
 		}
@@ -3369,6 +3418,8 @@ _exit_cheat:
 			}
 			else if (ailp.mode != ai_mode::AIM_STILL)
 			{
+				auto &Walls = LevelUniqueWallSubsystemState.Walls;
+				auto &vcwallptr = Walls.vcptr;
 				const auto r = openable_doors_in_segment(vcwallptr, vcsegptr(obj->segnum));
 				if (r != side_none)
 				{
@@ -3430,6 +3481,8 @@ _exit_cheat:
 			return;
 	}
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	// More special ability stuff, but based on a property of a robot, not its ID.
 	if (robot_is_companion(robptr)) {
 
@@ -3504,7 +3557,7 @@ _exit_cheat:
 						ai_do_actual_firing_stuff(vmobjptridx, obj, aip, ailp, robptr, vec_to_player, dist_to_player, gun_point, player_visibility, object_animates, player_info, aip->CURRENT_GUN);
 					return;
 				}
-				create_path_to_player(obj, 8, 1);
+				create_path_to_player(obj, 8, create_path_safety_flag::safe);
 				ai_multi_send_robot_position(obj, -1);
 			} else if ((player_visibility == 0) && (dist_to_player > F1_0*80) && (!(Game_mode & GM_MULTI))) {
 				// If pretty far from the player, player cannot be seen
@@ -3547,7 +3600,7 @@ _exit_cheat:
 					return;
 				}
 #if defined(DXX_BUILD_DESCENT_I)
-				create_path_to_player(obj, 10, 1);
+				create_path_to_player(obj, 10, create_path_safety_flag::safe);
 				ai_multi_send_robot_position(obj, -1);
 #endif
 			} else if ((aip->CURRENT_STATE != AIS_REST) && (aip->GOAL_STATE != AIS_REST)) {
@@ -3844,6 +3897,8 @@ _exit_cheat:
 
 			if (!ai_multiplayer_awareness(obj, 62))
 				return;
+			auto &Vertices = LevelSharedVertexState.get_vertices();
+			auto &vcvertptr = Vertices.vcptr;
 			const auto &&center_point = compute_center_point_on_side(vcvertptr, vcsegptr(obj->segnum), aip->GOALSIDE);
 			const auto goal_vector = vm_vec_normalized_quick(vm_vec_sub(center_point, obj->pos));
 			ai_turn_towards_vector(goal_vector, obj, robptr.turn_time[Difficulty_level]);
@@ -4338,6 +4393,7 @@ void do_ai_frame_all(void)
 	}
 
 	// (Moved here from do_d2_boss_stuff() because that only gets called if robot aware of player.)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if (Boss_dying) {
 		range_for (const auto &&objp, vmobjptridx)
 		{
@@ -4442,6 +4498,10 @@ namespace dsx {
 
 int ai_save_state(PHYSFS_File *fp)
 {
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &Boss_gate_segs = LevelSharedBossState.Gate_segs;
+	auto &Boss_teleport_segs = LevelSharedBossState.Teleport_segs;
+#endif
 	fix tmptime32 = 0;
 
 	const int Ai_initialized = 0;
@@ -4648,6 +4708,10 @@ static void ai_cloak_info_read_n_swap(ai_cloak_info *ci, int n, int swap, PHYSFS
 
 int ai_restore_state(PHYSFS_File *fp, int version, int swap)
 {
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &Boss_gate_segs = LevelSharedBossState.Gate_segs;
+	auto &Boss_teleport_segs = LevelSharedBossState.Teleport_segs;
+#endif
 	fix tmptime32 = 0;
 
 	PHYSFSX_readSXE32(fp, swap);
@@ -4667,6 +4731,7 @@ int ai_restore_state(PHYSFS_File *fp, int version, int swap)
 
 	// If boss teleported, set the looping 'see' sound -kreatordxx
 	// Also make sure any bosses that were generated/released during the game have teleport segs
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 #if DXX_USE_EDITOR
 	if (!EditorWindow)
 #endif
@@ -4683,7 +4748,7 @@ int ai_restore_state(PHYSFS_File *fp, int version, int swap)
 				{
 					if (Last_teleport_time != 0 && Last_teleport_time != Boss_cloak_start_time)
 						boss_link_see_sound(o);
-					boss_init_all_segments(o);
+					boss_init_all_segments(Segments, o);
 				}
 			}
 		}

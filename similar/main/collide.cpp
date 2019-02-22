@@ -129,11 +129,12 @@ static void collide_robot_and_wall(fvcwallptr &vcwallptr, object &robot, const v
 #if defined(DXX_BUILD_DESCENT_I)
 	if (robot_id == ROBOT_BRAIN || robot.ctype.ai_info.behavior == ai_behavior::AIB_RUN_FROM)
 #elif defined(DXX_BUILD_DESCENT_II)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[robot_id];
 	if (robot_id == ROBOT_BRAIN || robot.ctype.ai_info.behavior == ai_behavior::AIB_RUN_FROM || robot_is_companion(robptr) == 1 || robot.ctype.ai_info.behavior == ai_behavior::AIB_SNIPE)
 #endif
 	{
-		auto	wall_num = hitseg->sides[hitwall].wall_num;
+		const auto wall_num = hitseg->shared_segment::sides[hitwall].wall_num;
 		if (wall_num != wall_none) {
 			auto &w = *vcwallptr(wall_num);
 			if (w.type == WALL_DOOR && w.keys == KEY_NONE && w.state == WALL_DOOR_CLOSED && !(w.flags & WALL_DOOR_LOCKED))
@@ -208,6 +209,7 @@ static void apply_force_damage(const vmobjptridx_t obj,fix force,const vmobjptri
 	if (damage < FORCE_DAMAGE_THRESHOLD)
 		return;
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	switch (obj->type) {
 
 		case OBJ_ROBOT:
@@ -271,6 +273,7 @@ static void apply_force_damage(const vmobjptridx_t obj,fix force,const vmobjptri
 //	-----------------------------------------------------------------------------
 static void bump_this_object(const vmobjptridx_t objp, const vmobjptridx_t other_objp, const vms_vector &force, int damage_flag)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if (! (objp->mtype.phys_info.flags & PF_PERSISTENT))
 	{
 		if (objp->type == OBJ_PLAYER) {
@@ -335,12 +338,13 @@ void bump_one_object(object_base &obj0, const vms_vector &hit_dir, fix damage)
 namespace dsx {
 static void collide_player_and_wall(const vmobjptridx_t playerobj, fix hitspeed, const vmsegptridx_t hitseg, short hitwall, const vms_vector &hitpt)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	fix damage;
 
 	if (get_player_id(playerobj) != Player_num) // Execute only for local player
 		return;
 
-	const auto tmap_num = hitseg->sides[hitwall].tmap_num;
+	const auto tmap_num = hitseg->unique_segment::sides[hitwall].tmap_num;
 
 	//	If this wall does damage, don't make *BONK* sound, we'll be making another sound.
 	if (TmapInfo[tmap_num].damage > 0)
@@ -380,7 +384,7 @@ static void collide_player_and_wall(const vmobjptridx_t playerobj, fix hitspeed,
 	// Note: Does quad damage if hit a force field - JL
 	damage = (hitspeed / WALL_DAMAGE_SCALE) * (ForceFieldHit*8 + 1);
 
-	const auto tmap_num2 = hitseg->sides[hitwall].tmap_num2;
+	const auto tmap_num2 = hitseg->unique_segment::sides[hitwall].tmap_num2;
 
 	//don't do wall damage and sound if hit lava or water
 	if ((TmapInfo[tmap_num].flags & (TMI_WATER|TMI_VOLATILE)) || (tmap_num2 && (TmapInfo[tmap_num2&0x3fff].flags & (TMI_WATER|TMI_VOLATILE))))
@@ -405,7 +409,7 @@ static void collide_player_and_wall(const vmobjptridx_t playerobj, fix hitspeed,
 			  	apply_damage_to_player( playerobj, playerobj, damage, 0 );
 
 		// -- No point in doing this unless we compute a reasonable hitpt.  Currently it is just the player's position. --MK, 01/18/96
-		// -- if (!(TmapInfo[Segments[hitseg].sides[hitwall].tmap_num].flags & TMI_FORCE_FIELD)) {
+		// -- if (!(TmapInfo[Segments[hitseg].unique_segment::sides[hitwall].tmap_num].flags & TMI_FORCE_FIELD)) {
 		// -- 	vms_vector	hitpt1;
 		// -- 	int			hitseg1;
 		// --
@@ -424,17 +428,20 @@ static void collide_player_and_wall(const vmobjptridx_t playerobj, fix hitspeed,
 static fix64	Last_volatile_scrape_time = 0;
 static fix64	Last_volatile_scrape_sound_time = 0;
 
+namespace dsx {
+
 #if defined(DXX_BUILD_DESCENT_I)
 static
 #endif
 //see if wall is volatile or water
 //if volatile, cause damage to player
 //returns 1=lava, 2=water
-volatile_wall_result check_volatile_wall(const vmobjptridx_t obj, const segment &seg, const unsigned sidenum)
+volatile_wall_result check_volatile_wall(const vmobjptridx_t obj, const unique_side &side)
 {
 	Assert(obj->type==OBJ_PLAYER);
 
-	const auto &ti = TmapInfo[seg.sides[sidenum].tmap_num];
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	const auto &ti = TmapInfo[side.tmap_num];
 	const fix d = ti.damage;
 	if (d > 0
 #if defined(DXX_BUILD_DESCENT_II)
@@ -486,12 +493,12 @@ volatile_wall_result check_volatile_wall(const vmobjptridx_t obj, const segment 
 }
 
 //this gets called when an object is scraping along the wall
-bool scrape_player_on_wall(const vmobjptridx_t obj, const vmsegptridx_t hitseg, short hitside, const vms_vector &hitpt)
+bool scrape_player_on_wall(const vmobjptridx_t obj, const vmsegptridx_t hitseg, const unsigned hitside, const vms_vector &hitpt)
 {
 	if (obj->type != OBJ_PLAYER || get_player_id(obj) != Player_num)
 		return false;
 
-	const auto type = check_volatile_wall(obj, hitseg, hitside);
+	const auto type = check_volatile_wall(obj, hitseg->unique_segment::sides[hitside]);
 	if (type != volatile_wall_result::none)
 	{
 		if ((GameTime64 > Last_volatile_scrape_sound_time + F1_0/4) || (GameTime64 < Last_volatile_scrape_sound_time)) {
@@ -506,7 +513,7 @@ bool scrape_player_on_wall(const vmobjptridx_t obj, const vmsegptridx_t hitseg, 
 			multi_digi_link_sound_to_pos(sound, hitseg, 0, hitpt, 0, F1_0);
 		}
 
-		auto hit_dir = hitseg->sides[hitside].normals[0];
+		auto hit_dir = hitseg->shared_segment::sides[hitside].normals[0];
 
 		vm_vec_scale_add2(hit_dir, make_random_vector(), F1_0/8);
 		vm_vec_normalize_quick(hit_dir);
@@ -529,6 +536,7 @@ static int effect_parent_is_guidebot(fvcobjptr &vcobjptr, const laser_parent &la
 		/* parent replaced, no idea what it once was */
 		return 0;
 	const auto robot_id = get_robot_id(robot);
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[robot_id];
 	return robot_is_companion(robptr);
 }
@@ -536,16 +544,16 @@ static int effect_parent_is_guidebot(fvcobjptr &vcobjptr, const laser_parent &la
 
 //if an effect is hit, and it can blow up, then blow it up
 //returns true if it blew up
-namespace dsx {
-int check_effect_blowup(const vmsegptridx_t seg,int side,const vms_vector &pnt, const laser_parent &blower, int force_blowup_flag, int remote)
+int check_effect_blowup(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, const d_vclip_array &Vclip, const vmsegptridx_t seg,int side,const vms_vector &pnt, const laser_parent &blower, int force_blowup_flag, int remote)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	int tm;
 
 #if defined(DXX_BUILD_DESCENT_I)
 	static constexpr std::integral_constant<int, 0> force_blowup_flag{};
 #elif defined(DXX_BUILD_DESCENT_II)
 	int trigger_check = 0, is_trigger = 0;
-	auto wall_num = seg->sides[side].wall_num;
+	const auto wall_num = seg->shared_segment::sides[side].wall_num;
 
 	// If this wall has a trigger and the blower-upper is not the player or the buddy, abort!
 	trigger_check = !(blower.parent_type == OBJ_PLAYER || effect_parent_is_guidebot(vcobjptr, blower));
@@ -553,13 +561,17 @@ int check_effect_blowup(const vmsegptridx_t seg,int side,const vms_vector &pnt, 
 	if (Game_mode & GM_MULTI)
 		trigger_check = (!(blower.parent_type == OBJ_PLAYER && (blower.parent_num == get_local_player().objnum || remote)));
 	if ( wall_num != wall_none )
+	{
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
+		auto &vcwallptr = Walls.vcptr;
 		if (vcwallptr(wall_num)->trigger != trigger_none)
 			is_trigger = 1;
+	}
 	if (trigger_check && is_trigger)
 		return(0);
 #endif
 
-	if ((tm=seg->sides[side].tmap_num2) != 0) {
+	if ((tm=seg->unique_segment::sides[side].tmap_num2) != 0) {
 		int tmf = tm&0xc000;		//tm flags
 		tm &= 0x3fff;			//tm without flags
 
@@ -612,7 +624,7 @@ int check_effect_blowup(const vmsegptridx_t seg,int side,const vms_vector &pnt, 
 				//note: this must get called before the texture changes,
 				//because we use the light value of the texture to change
 				//the static light in the segment
-				subtract_light(seg,side);
+				subtract_light(LevelSharedDestructibleLightState, seg, side);
 
 				// we blew up something connected to a trigger. Send it to others!
 				if ((Game_mode & GM_MULTI) && is_trigger && !remote && !force_blowup_flag)
@@ -661,18 +673,22 @@ int check_effect_blowup(const vmsegptridx_t seg,int side,const vms_vector &pnt, 
 						new_ec->flags |= EF_ONE_SHOT;
 						new_ec->dest_bm_num = Effects[ec].dest_bm_num;
 
-						Assert(bm_num!=0 && seg->sides[side].tmap_num2!=0);
-						seg->sides[side].tmap_num2 = bm_num | tmf;		//replace with destoyed
+						assert(bm_num != 0);
+						auto &tmap_num2 = seg->unique_segment::sides[side].tmap_num2;
+						assert(tmap_num2 != 0);
+						tmap_num2 = bm_num | tmf;		//replace with destroyed
 
 					}
 					else {
-						Assert(db!=0 && seg->sides[side].tmap_num2!=0);
-						seg->sides[side].tmap_num2 = db | tmf;		//replace with destoyed
+						assert(db != 0);
+						auto &tmap_num2 = seg->unique_segment::sides[side].tmap_num2;
+						assert(tmap_num2 != 0);
+						tmap_num2 = db | tmf;		//replace with destroyed
 					}
 				}
 #if defined(DXX_BUILD_DESCENT_II)
 				else {
-					seg->sides[side].tmap_num2 = TmapInfo[tm].destroyed | tmf;
+					seg->unique_segment::sides[side].tmap_num2 = TmapInfo[tm].destroyed | tmf;
 
 					//assume this is a light, and play light sound
 		  			digi_link_sound_to_pos( SOUND_LIGHT_BLOWNUP, seg, 0, pnt,  0, F1_0 );
@@ -697,10 +713,15 @@ int check_effect_blowup(const vmsegptridx_t seg,int side,const vms_vector &pnt, 
 // int Show_seg_and_side = 0;
 
 namespace dsx {
-static window_event_result collide_weapon_and_wall(object_array &objects, fvmsegptridx &vmsegptridx, const vmobjptridx_t weapon, const vmsegptridx_t hitseg, short hitwall, const vms_vector &hitpt)
+static window_event_result collide_weapon_and_wall(
+#if defined(DXX_BUILD_DESCENT_II)
+	const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState,
+#endif
+	object_array &Objects, fvmsegptridx &vmsegptridx, const vmobjptridx_t weapon, const vmsegptridx_t hitseg, const unsigned hitwall, const vms_vector &hitpt)
 {
-	auto &imobjptridx = objects.imptridx;
-	auto &vcobjptr = objects.vcptr;
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	auto &imobjptridx = Objects.imptridx;
+	auto &vcobjptr = Objects.vcptr;
 	int blew_up;
 	int playernum;
 	auto result = window_event_result::handled;
@@ -708,8 +729,9 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 #if defined(DXX_BUILD_DESCENT_I)
 	if (weapon->mtype.phys_info.flags & PF_BOUNCE)
 		return window_event_result::ignored;
+	auto &uhitside = hitseg->unique_segment::sides[hitwall];
 #elif defined(DXX_BUILD_DESCENT_II)
-	auto &vcobjptridx = objects.vcptridx;
+	auto &vcobjptridx = Objects.vcptridx;
 	if (get_weapon_id(weapon) == weapon_id_type::OMEGA_ID)
 		if (!ok_to_do_omega_damage(weapon)) // see comment in laser.c
 			return window_event_result::ignored;
@@ -718,14 +740,15 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 	if (get_weapon_id(weapon) == weapon_id_type::GUIDEDMISS_ID) {
 		fix	dot;
 
-		dot = vm_vec_dot(weapon->orient.fvec, hitseg->sides[hitwall].normals[0]);
+		dot = vm_vec_dot(weapon->orient.fvec, hitseg->shared_segment::sides[hitwall].normals[0]);
 		if (dot < -F1_0/6) {
 			weapon->mtype.phys_info.flags &= ~PF_BOUNCE;
 		}
 	}
 
+	auto &uhitside = hitseg->unique_segment::sides[hitwall];
 	//if an energy weapon hits a forcefield, let it bounce
-	if ((TmapInfo[hitseg->sides[hitwall].tmap_num].flags & TMI_FORCE_FIELD) &&
+	if ((TmapInfo[uhitside.tmap_num].flags & TMI_FORCE_FIELD) &&
 		 !(weapon->type == OBJ_WEAPON && Weapon_info[get_weapon_id(weapon)].energy_usage==0)) {
 
 		//make sound
@@ -739,9 +762,9 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 			//	MK: Real pain when you need to know a seg:side and you've got quad lasers.
 			HUD_init_message(HM_DEFAULT, "Hit at segment = %hu, side = %i", static_cast<vmsegptridx_t::integral_type>(hitseg), hitwall);
 			if (get_weapon_id(weapon) < 4)
-				subtract_light(hitseg, hitwall);
+				subtract_light(LevelSharedDestructibleLightState, hitseg, hitwall);
 			else if (get_weapon_id(weapon) == weapon_id_type::FLARE_ID)
-				add_light(hitseg, hitwall);
+				add_light(LevelSharedDestructibleLightState, hitseg, hitwall);
 		}
 
 		//@@#ifdef EDITOR
@@ -756,9 +779,7 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 		return window_event_result::ignored;
 	}
 
-	blew_up = check_effect_blowup(hitseg,hitwall, hitpt, weapon->ctype.laser_info, 0, 0);
-
-	//if ((seg->sides[hitwall].tmap_num2==0) && (TmapInfo[seg->sides[hitwall].tmap_num].flags & TMI_VOLATILE)) {
+	blew_up = check_effect_blowup(LevelSharedDestructibleLightState, Vclip, hitseg, hitwall, hitpt, weapon->ctype.laser_info, 0, 0);
 
 	int	robot_escort;
 #if defined(DXX_BUILD_DESCENT_II)
@@ -779,8 +800,8 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 	{
 		robot_escort = 0;
 
-		const auto &&objp = vcobjptr(weapon->ctype.laser_info.parent_num);
-		if (objp->type == OBJ_PLAYER)
+		auto &objp = *vcobjptr(weapon->ctype.laser_info.parent_num);
+		if (objp.type == OBJ_PLAYER)
 			playernum = get_player_id(objp);
 		else
 			playernum = -1;		//not a player (thus a robot)
@@ -804,7 +825,10 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 	const auto wall_type = wall_hit_process(player_info.powerup_flags, hitseg, hitwall, weapon->shields, playernum, weapon);
 
 	// Wall is volatile if either tmap 1 or 2 is volatile
-	if ((TmapInfo[hitseg->sides[hitwall].tmap_num].flags & TMI_VOLATILE) || (hitseg->sides[hitwall].tmap_num2 && (TmapInfo[hitseg->sides[hitwall].tmap_num2&0x3fff].flags & TMI_VOLATILE))) {
+	if ((TmapInfo[uhitside.tmap_num].flags & TMI_VOLATILE) ||
+		(uhitside.tmap_num2 && (TmapInfo[uhitside.tmap_num2 & 0x3fff].flags & TMI_VOLATILE))
+		)
+	{
 		weapon_info *wi = &Weapon_info[get_weapon_id(weapon)];
 
 		//we've hit a volatile wall
@@ -837,7 +861,10 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 
 	}
 #if defined(DXX_BUILD_DESCENT_II)
-	else if ((TmapInfo[hitseg->sides[hitwall].tmap_num].flags & TMI_WATER) || (hitseg->sides[hitwall].tmap_num2 && (TmapInfo[hitseg->sides[hitwall].tmap_num2&0x3fff].flags & TMI_WATER))) {
+	else if ((TmapInfo[uhitside.tmap_num].flags & TMI_WATER) ||
+			(uhitside.tmap_num2 && (TmapInfo[uhitside.tmap_num2 & 0x3fff].flags & TMI_WATER))
+			)
+	{
 		weapon_info *wi = &Weapon_info[get_weapon_id(weapon)];
 
 		//we've hit water
@@ -886,7 +913,7 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 
 			//if it's not the player's weapon, or it is the player's and there
 			//is no wall, and no blowing up monitor, then play sound
-			if ((weapon->ctype.laser_info.parent_type != OBJ_PLAYER) ||	((hitseg->sides[hitwall].wall_num == wall_none || wall_type == wall_hit_process_t::WHP_NOT_SPECIAL) && !blew_up))
+			if ((weapon->ctype.laser_info.parent_type != OBJ_PLAYER) ||	((hitseg->shared_segment::sides[hitwall].wall_num == wall_none || wall_type == wall_hit_process_t::WHP_NOT_SPECIAL) && !blew_up))
 				if ((Weapon_info[get_weapon_id(weapon)].wall_hit_sound > -1 ) && (!(weapon->flags & OF_SILENT)))
 				digi_link_sound_to_pos(Weapon_info[get_weapon_id(weapon)].wall_hit_sound, vmsegptridx(weapon->segnum), 0, weapon->pos, 0, F1_0);
 
@@ -909,7 +936,6 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 		if (!(weapon->flags & OF_SILENT) && (weapon->ctype.laser_info.parent_num == get_local_player().objnum))
 			create_awareness_event(weapon, player_awareness_type_t::PA_WEAPON_WALL_COLLISION);			// object "weapon" can attract attention to player
 
-//		if (weapon->id != FLARE_ID) {
 //	We now allow flares to open doors.
 		{
 #if defined(DXX_BUILD_DESCENT_I)
@@ -920,7 +946,7 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 				weapon->flags |= OF_SHOULD_BE_DEAD;
 
 			//don't let flares stick in force fields
-			if ((get_weapon_id(weapon) == weapon_id_type::FLARE_ID) && (TmapInfo[hitseg->sides[hitwall].tmap_num].flags & TMI_FORCE_FIELD))
+			if ((get_weapon_id(weapon) == weapon_id_type::FLARE_ID) && (TmapInfo[uhitside.tmap_num].flags & TMI_FORCE_FIELD))
 				weapon->flags |= OF_SHOULD_BE_DEAD;
 #endif
 
@@ -968,11 +994,11 @@ static window_event_result collide_weapon_and_wall(object_array &objects, fvmseg
 }
 }
 
-static void collide_debris_and_wall(const vmobjptridx_t debris, const vmsegptr_t hitseg, short hitwall, const vms_vector &)
+static void collide_debris_and_wall(const vmobjptridx_t debris, const unique_segment &hitseg, const unsigned hitwall, const vms_vector &)
 {
-	if (!PERSISTENT_DEBRIS || TmapInfo[hitseg->sides[hitwall].tmap_num].damage)
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	if (!PERSISTENT_DEBRIS || TmapInfo[hitseg.sides[hitwall].tmap_num].damage)
 		explode_object(debris,0);
-	return;
 }
 
 //	-------------------------------------------------------------------------------------------------------------------
@@ -998,6 +1024,7 @@ static void collide_robot_and_player(const vmobjptridx_t robot, const vmobjptrid
 
 	if (robot->flags&OF_EXPLODING)
 		return;
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 #endif
 
 	if (get_player_id(playerobj) == Player_num) {
@@ -1039,8 +1066,8 @@ static void collide_robot_and_player(const vmobjptridx_t robot, const vmobjptrid
 
 	if (check_collision_delayfunc_exec())
 	{
-		const auto &&player_segp = vmsegptridx(playerobj->segnum);
-		const auto &&collision_seg = find_point_seg(collision_point, player_segp);
+		const auto &&player_segp = Segments.vmptridx(playerobj->segnum);
+		const auto &&collision_seg = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, collision_point, player_segp);
 
 #if defined(DXX_BUILD_DESCENT_II)
 		// added this if to remove the bump sound if it's the thief.
@@ -1305,6 +1332,8 @@ static void collide_weapon_and_clutter(object_base &weapon, const vmobjptridx_t 
 //--mk, 121094 -- extern void spin_robot(object *robot, vms_vector *collision_point);
 
 #if defined(DXX_BUILD_DESCENT_II)
+namespace dsx {
+
 int	Final_boss_is_dead = 0;
 fix	Final_boss_countdown_time = 0;
 
@@ -1326,7 +1355,6 @@ window_event_result do_final_boss_frame(void)
 		return window_event_result::ignored;
 
 	return start_endlevel_sequence();		//pretend we hit the exit trigger
-
 }
 
 //	------------------------------------------------------------------------------------------------------
@@ -1360,6 +1388,8 @@ void do_final_boss_hacks(void)
 
 	Final_boss_is_dead = 1;
 }
+
+}
 #endif
 
 //	------------------------------------------------------------------------------------------------------
@@ -1371,6 +1401,7 @@ int apply_damage_to_robot(const vmobjptridx_t robot, fix damage, objnum_t killer
 
 	if (robot->shields < 0 ) return 0;	//robot already dead...
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(robot)];
 #if defined(DXX_BUILD_DESCENT_II)
 	if (robptr.boss_flag)
@@ -1463,10 +1494,6 @@ int apply_damage_to_robot(const vmobjptridx_t robot, fix damage, objnum_t killer
 #if defined(DXX_BUILD_DESCENT_II)
 			if (get_robot_id(robot) == SPECIAL_REACTOR_ROBOT)
 				special_reactor_stuff();
-			//if (Robot_info[robot->id].smart_blobs)
-			//	create_smart_children(robot, Robot_info[robot->id].smart_blobs);
-			//if (Robot_info[robot->id].badass)
-			//	explode_badass_object(robot, F1_0*Robot_info[robot->id].badass, F1_0*40, F1_0*150);
 			if (robptr.kamikaze)
 				explode_object(robot,1);		//	Kamikaze, explode right away, IN YOUR FACE!
 			else
@@ -1476,7 +1503,6 @@ int apply_damage_to_robot(const vmobjptridx_t robot, fix damage, objnum_t killer
 		return 1;
 	} else
 		return 0;
-}
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -1501,11 +1527,12 @@ static fix64 Last_time_buddy_gave_hint;
 
 //	------------------------------------------------------------------------------------------------------
 //	Return true if damage done to boss, else return false.
-static boss_weapon_collision_result do_boss_weapon_collision(fvmsegptridx &vmsegptridx, const vcobjptridx_t robotptridx, object &weapon, const vms_vector &collision_point)
+static boss_weapon_collision_result do_boss_weapon_collision(const d_level_shared_segment_state &LevelSharedSegmentState, d_level_unique_segment_state &LevelUniqueSegmentState, const vcobjptridx_t robotptridx, object &weapon, const vms_vector &collision_point)
 {
 	const object_base &robot = robotptridx;
 	int	d2_boss_index;
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	d2_boss_index = Robot_info[get_robot_id(robot)].boss_flag - BOSS_D2;
 
 	Assert((d2_boss_index >= 0) && (d2_boss_index < NUM_D2_BOSSES));
@@ -1537,7 +1564,7 @@ static boss_weapon_collision_result do_boss_weapon_collision(fvmsegptridx &vmseg
 		const auto tvec1 = vm_vec_normalized_quick(vm_vec_sub(collision_point, robot.pos));
 		dot = vm_vec_dot(tvec1, robot.orient.fvec);
 		if (dot > Boss_invulnerable_dot()) {
-			if (const auto &&segp = find_point_seg(collision_point, vmsegptridx(robot.segnum)))
+			if (const auto &&segp = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, collision_point, Segments.vmptridx(robot.segnum)))
 				digi_link_sound_to_pos(SOUND_WEAPON_HIT_DOOR, segp, 0, collision_point, 0, F1_0);
 			if (Buddy_objnum != object_none)
 			{
@@ -1589,7 +1616,7 @@ static boss_weapon_collision_result do_boss_weapon_collision(fvmsegptridx &vmseg
 	}
 	else if ((Weapon_info[get_weapon_id(weapon)].matter ? Boss_invulnerable_matter : Boss_invulnerable_energy)[d2_boss_index])
 	{
-		if (const auto &&segp = find_point_seg(collision_point, vmsegptridx(robot.segnum)))
+		if (const auto &&segp = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, collision_point, Segments.vmptridx(robot.segnum)))
 			digi_link_sound_to_pos(SOUND_WEAPON_HIT_DOOR, segp, 0, collision_point, 0, F1_0);
 		return boss_weapon_collision_result::invulnerable;
 	}
@@ -1598,7 +1625,6 @@ static boss_weapon_collision_result do_boss_weapon_collision(fvmsegptridx &vmseg
 #endif
 
 //	------------------------------------------------------------------------------------------------------
-namespace dsx {
 static void collide_robot_and_weapon(const vmobjptridx_t  robot, const vmobjptridx_t  weapon, vms_vector &collision_point)
 {
 #if defined(DXX_BUILD_DESCENT_II)
@@ -1607,6 +1633,7 @@ static void collide_robot_and_weapon(const vmobjptridx_t  robot, const vmobjptri
 			return;
 #endif
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &robptr = Robot_info[get_robot_id(robot)];
 	if (robptr.boss_flag)
 	{
@@ -1617,7 +1644,7 @@ static void collide_robot_and_weapon(const vmobjptridx_t  robot, const vmobjptri
 	}
 #if defined(DXX_BUILD_DESCENT_II)
 	const boss_weapon_collision_result damage_flag = (robptr.boss_flag >= BOSS_D2)
-		? do_boss_weapon_collision(vmsegptridx, robot, weapon, collision_point)
+		? do_boss_weapon_collision(LevelSharedSegmentState, LevelUniqueSegmentState, robot, weapon, collision_point)
 		: boss_weapon_collision_result::normal;
 #endif
 
@@ -1776,12 +1803,13 @@ static void collide_robot_and_weapon(const vmobjptridx_t  robot, const vmobjptri
 }
 }
 
-static void collide_hostage_and_player(const vmobjptridx_t  hostage, const vmobjptr_t player, const vms_vector &)
+static void collide_hostage_and_player(const vmobjptridx_t hostage, object &player, const vms_vector &)
 {
 	// Give player points, etc.
-	if ( player == ConsoleObject )	{
+	if (&player == ConsoleObject)
+	{
 		detect_escort_goal_accomplished(hostage);
-		add_points_to_score(player->ctype.player_info, HOSTAGE_SCORE);
+		add_points_to_score(player.ctype.player_info, HOSTAGE_SCORE);
 
 		// Do effect
 		hostage_rescue();
@@ -1913,7 +1941,7 @@ void drop_player_eggs(const vmobjptridx_t playerobj)
 		{
 			const auto randvec = make_random_vector();
 			const auto tvec = vm_vec_add(playerobj->pos, randvec);
-			const auto &&newseg = find_point_seg(tvec, vmsegptridx(playerobj->segnum));
+			const auto &&newseg = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, tvec, Segments.vmptridx(playerobj->segnum));
 			if (newseg != segment_none)
 			{
 				-- mines;
@@ -2101,6 +2129,7 @@ void apply_damage_to_player(object &playerobj, const icobjptridx_t killer, fix d
 			playerobj.flags |= OF_SHOULD_BE_DEAD;
 
 #if defined(DXX_BUILD_DESCENT_II)
+			auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 			if (Buddy_objnum != object_none)
 				if (killer && killer->type == OBJ_ROBOT && robot_is_companion(Robot_info[get_robot_id(killer)]))
 					Buddy_sorry_time = GameTime64;
@@ -2199,6 +2228,7 @@ static void collide_player_and_weapon(const vmobjptridx_t playerobj, const vmobj
 void collide_player_and_nasty_robot(const vmobjptridx_t playerobj, const vmobjptridx_t robot, const vms_vector &collision_point)
 {
 	const auto &&player_segp = vmsegptridx(playerobj->segnum);
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	digi_link_sound_to_pos(Robot_info[get_robot_id(robot)].claw_sound, player_segp, 0, collision_point, 0, F1_0);
 	object_create_explosion(player_segp, collision_point, i2f(10)/2, VCLIP_PLAYER_HIT);
 
@@ -2211,8 +2241,13 @@ void collide_player_and_nasty_robot(const vmobjptridx_t playerobj, const vmobjpt
 
 static vms_vector find_exit_direction(vms_vector result, const vcobjptr_t objp, const vcsegptr_t segp)
 {
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	for (unsigned side = MAX_SIDES_PER_SEGMENT; side --;)
-		if (WALL_IS_DOORWAY(segp, side) & WID_FLY_FLAG) {
+		if (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, side) & WID_FLY_FLAG)
+		{
 			const auto &&exit_point = compute_center_point_on_side(vcvertptr, segp, side);
 			vm_vec_add2(result, vm_vec_normalized_quick(vm_vec_sub(exit_point, objp->pos)));
 			break;
@@ -2254,6 +2289,7 @@ void collide_robot_and_materialization_center(const vmobjptridx_t objp)
 	const auto &&segp = vmsegptridx(objp->segnum);
 	digi_link_sound_to_pos(SOUND_ROBOT_HIT, segp, 0, objp->pos, 0, F1_0);
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if ( Robot_info[get_robot_id(objp)].exp1_vclip_num > -1 )
 		object_create_explosion(segp, objp->pos, (objp->size / 2 * 3) / 4, Robot_info[get_robot_id(objp)].exp1_vclip_num);
 
@@ -2631,8 +2667,13 @@ constexpr collision_outer_array_t CollisionResult = collide_init(make_tree_index
 #endif
 	ENABLE_COLLISION( OBJ_DEBRIS, OBJ_WALL );
 
+namespace dsx {
 
-window_event_result collide_object_with_wall(const vmobjptridx_t A, fix hitspeed, const vmsegptridx_t hitseg, short hitwall, const vms_vector &hitpt)
+window_event_result collide_object_with_wall(
+#if defined(DXX_BUILD_DESCENT_II)
+	const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState,
+#endif
+	const vmobjptridx_t A, fix hitspeed, const vmsegptridx_t hitseg, short hitwall, const vms_vector &hitpt)
 {
 
 	switch( A->type )	{
@@ -2641,13 +2682,21 @@ window_event_result collide_object_with_wall(const vmobjptridx_t A, fix hitspeed
 		break;
 	case OBJ_PLAYER:		collide_player_and_wall(A,hitspeed,hitseg,hitwall,hitpt); break;
 		case OBJ_WEAPON:
-			return collide_weapon_and_wall(Objects, vmsegptridx, A, hitseg, hitwall, hitpt);
+			return collide_weapon_and_wall(
+#if defined(DXX_BUILD_DESCENT_II)
+				LevelSharedDestructibleLightState,
+#endif
+				Objects, vmsegptridx, A, hitseg, hitwall, hitpt);
 	case OBJ_DEBRIS:		collide_debris_and_wall(A,hitseg,hitwall,hitpt); break;
 
 	case OBJ_FIREBALL:	break;		//collide_fireball_and_wall(A,hitspeed,hitseg,hitwall,hitpt);
 		case OBJ_ROBOT:
+		{
+			auto &Walls = LevelUniqueWallSubsystemState.Walls;
+			auto &vcwallptr = Walls.vcptr;
 			collide_robot_and_wall(vcwallptr, A, hitseg, hitwall, hitpt);
 			break;
+		}
 	case OBJ_HOSTAGE:		break;		//collide_hostage_and_wall(A,hitspeed,hitseg,hitwall,hitpt);
 	case OBJ_CAMERA:		break;		//collide_camera_and_wall(A,hitspeed,hitseg,hitwall,hitpt);
 	case OBJ_POWERUP:		break;		//collide_powerup_and_wall(A,hitspeed,hitseg,hitwall,hitpt);
@@ -2658,4 +2707,6 @@ window_event_result collide_object_with_wall(const vmobjptridx_t A, fix hitspeed
 	}
 
 	return window_event_result::handled;	// assume handled
+}
+
 }

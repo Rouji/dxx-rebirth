@@ -38,6 +38,7 @@ char copyright[] = "DESCENT   COPYRIGHT (C) 1994,1995 PARALLAX SOFTWARE CORPORAT
 char copyright[] = "DESCENT II  COPYRIGHT (C) 1994-1996 PARALLAX SOFTWARE CORPORATION";
 #endif
 
+#include "dxxsconf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,7 +64,6 @@ char copyright[] = "DESCENT II  COPYRIGHT (C) 1994-1996 PARALLAX SOFTWARE CORPOR
 #include "dxxerror.h"
 #include "player.h"
 #include "game.h"
-#include "segment.h"		//for Side_to_verts
 #include "u_mem.h"
 #include "screens.h"
 #include "texmap.h"
@@ -95,14 +95,11 @@ char copyright[] = "DESCENT II  COPYRIGHT (C) 1994-1996 PARALLAX SOFTWARE CORPOR
 #endif
 #include "event.h"
 #include "rbaudio.h"
-#if !defined(__linux__) && !defined(__OpenBSD__)
-#include "messagebox.h"
-#else
 #if DXX_WORDS_NEED_ALIGNMENT
 #include <sys/prctl.h>
 #endif
-#endif
 #if DXX_USE_EDITOR
+#include "messagebox.h"
 #include "editor/editor.h"
 #include "editor/kdefs.h"
 #include "ui.h"
@@ -111,8 +108,6 @@ char copyright[] = "DESCENT II  COPYRIGHT (C) 1994-1996 PARALLAX SOFTWARE CORPOR
 #if DXX_USE_UDP
 #include "net_udp.h"
 #endif
-
-#include "dxxsconf.h"
 #include "dsx-ns.h"
 #include "compiler-begin.h"
 
@@ -341,6 +336,32 @@ window_event_result standard_handler(const d_event &event)
 						if (Game_wind == window_get_front())
 							return window_event_result::ignored;
 					gr_toggle_fullscreen();
+#if SDL_MAJOR_VERSION == 2
+					{
+						/* Hack to force the canvas to adjust to the new
+						 * dimensions.  Without this, the canvas
+						 * continues to use the old window size until
+						 * the hack of calling `init_cockpit` from
+						 * `game_handler` fixes the dimensions.  If the
+						 * window became bigger, the game fails to draw
+						 * in the full new area.  If the window became
+						 * smaller, part of the game is outside the
+						 * cropped area.
+						 *
+						 * If the automap is open, the view is still
+						 * wrong, since the automap uses its own private
+						 * canvas.  That will need to be fixed
+						 * separately.  Ideally, the whole window
+						 * system would be reworked to provide a general
+						 * notification to every interested canvas when
+						 * the top level window resizes.
+						 */
+						auto sm = Screen_mode;
+						Screen_mode = SCREEN_GAME;
+						init_cockpit();
+						Screen_mode = sm;
+					}
+#endif
 					return window_event_result::handled;
 
 #if defined(__APPLE__) || defined(macintosh)
@@ -358,7 +379,9 @@ window_event_result standard_handler(const d_event &event)
 		case EVENT_WINDOW_DRAW:
 		case EVENT_IDLE:
 			//see if redbook song needs to be restarted
+#if DXX_USE_SDL_REDBOOK_AUDIO
 			RBACheckFinishedHook();
+#endif
 			return window_event_result::handled;
 
 		case EVENT_QUIT:
@@ -429,9 +452,9 @@ static int main(int argc, char *argv[])
 #define DXX_HOGFILE_PROGRAM_DATA_DIRECTORY	\
 			      "\t$HOME/.d" DXX_NAME_NUMBER "x-rebirth\n"	\
 					DXX_HOGFILE_SHAREPATH_INDENTED
-#ifdef SHAREPATH
+#if DXX_USE_SHAREPATH
 #define DXX_HOGFILE_SHAREPATH_INDENTED	\
-			      "\t" SHAREPATH "\n"
+			      "\t" DXX_SHAREPATH "\n"
 #else
 #define DXX_HOGFILE_SHAREPATH_INDENTED
 #endif
@@ -525,7 +548,7 @@ static int main(int argc, char *argv[])
 #endif
 
 	con_puts(CON_VERBOSE, "Going into graphics mode...");
-	gr_set_mode(Game_screen_mode);
+	gr_set_mode_from_window_size();
 
 	// Load the palette stuff. Returns non-zero if error.
 	con_puts(CON_DEBUG, "Initializing palette system...");
@@ -687,16 +710,17 @@ static int main(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
 	mem_init();
-#if defined(__linux__) || defined(__OpenBSD__)
 #if DXX_WORDS_NEED_ALIGNMENT
 	prctl(PR_SET_UNALIGN, PR_UNALIGN_NOPRINT, 0, 0, 0);
 #endif
-#else
+#if defined(WIN32) || defined(__APPLE__) || defined(__MACH__)
+#if DXX_USE_EDITOR
 	set_warn_func(msgbox_warning);
 #endif
 #ifdef WIN32
 	void d_set_exception_handler();
 	d_set_exception_handler();
+#endif
 #endif
 	return dsx::main(argc, argv);
 }

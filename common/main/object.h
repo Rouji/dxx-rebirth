@@ -48,6 +48,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "fwd-object.h"
 #include "weapon.h"
 #include "powerup.h"
+#include "compiler-integer_sequence.h"
 #include "compiler-poison.h"
 #include "player-flags.h"
 
@@ -207,22 +208,14 @@ struct physics_info_rw
 
 struct laser_parent
 {
-	short   parent_type;        // The type of the parent of this object
-	objnum_t   parent_num;         // The object's parent's number
-	object_signature_t     parent_signature;   // The object's parent's signature...
-	constexpr laser_parent() :
-		parent_type{}, parent_num{}, parent_signature(0)
-	{
-	}
+	int16_t parent_type = {};        // The type of the parent of this object
+	objnum_t parent_num = {};         // The object's parent's number
+	object_signature_t parent_signature = {};   // The object's parent's signature...
 };
-
-}
-
-namespace dsx {
 
 struct laser_info : prohibit_void_ptr<laser_info>, laser_parent
 {
-	fix64   creation_time;      // Absolute time of creation.
+	fix64 creation_time = 0;      // Absolute time of creation.
 	/* hitobj_pos specifies the next position to which a value should be
 	 * written.  That position may have a defined value if the array has
 	 * wrapped, but should be treated as write-only in the general case.
@@ -232,22 +225,12 @@ struct laser_info : prohibit_void_ptr<laser_info>, laser_parent
 	 * hitobj_count == hitobj_values.size(), hitobj_pos wraps around and
 	 * begins erasing the oldest elements first.
 	 */
-	uint8_t hitobj_pos, hitobj_count;
-	std::array<objnum_t, 83> hitobj_values;
-	objnum_t   track_goal;         // Object this object is tracking.
-	fix     multiplier;         // Power if this is a fusion bolt (or other super weapon to be added).
-#if defined(DXX_BUILD_DESCENT_II)
-	fix64	last_afterburner_time;	//	Time at which this object last created afterburner blobs.
-#endif
-	constexpr laser_info() :
-		creation_time{}, hitobj_pos{}, hitobj_count{}, hitobj_values{}, track_goal{}, multiplier{}
-#if defined(DXX_BUILD_DESCENT_II)
-		, last_afterburner_time{}
-#endif
-	{
-	}
-	bool test_set_hitobj(const vcobjidx_t o);
-	bool test_hitobj(const vcobjidx_t o) const;
+	uint8_t hitobj_pos = 0, hitobj_count = 0;
+	std::array<objnum_t, 83> hitobj_values = {};
+	objnum_t track_goal = 0;         // Object this object is tracking.
+	fix multiplier = 0;         // Power if this is a fusion bolt (or other super weapon to be added).
+	uint_fast8_t test_set_hitobj(const vcobjidx_t o);
+	uint_fast8_t test_hitobj(const vcobjidx_t o) const;
 	icobjidx_t get_last_hitobj() const
 	{
 		if (!hitobj_count)
@@ -287,10 +270,6 @@ struct laser_info : prohibit_void_ptr<laser_info>, laser_parent
 		hitobj_values[0] = o;
 	}
 };
-
-}
-
-namespace dcx {
 
 // Same as above but structure Savegames/Multiplayer objects expect
 struct laser_info_rw
@@ -444,6 +423,13 @@ struct object_base
 
 namespace dsx {
 
+#if defined(DXX_BUILD_DESCENT_II)
+struct laser_info : public ::dcx::laser_info
+{
+	fix64 last_afterburner_time = 0;	//	Time at which this object last created afterburner blobs.
+};
+#endif
+
 struct object : public ::dcx::object_base
 {
 	// control info, determined by CONTROL_TYPE
@@ -557,6 +543,21 @@ struct obj_position
 		dxx_object_movement_type_ref.movement_type = static_cast<movement_type_t>(dxx_object_movement_type_value);	\
 	} DXX_END_COMPOUND_STATEMENT )
 
+template <typename T, std::size_t... N>
+constexpr array<T, sizeof...(N)> init_object_number_array(index_sequence<N...>)
+{
+	return {{((void)N, object_none)...}};
+}
+
+template <typename T, std::size_t N>
+struct object_number_array : array<T, N>
+{
+	constexpr object_number_array() :
+		array<T, N>(init_object_number_array<T>(make_tree_index_sequence<N>()))
+	{
+	}
+};
+
 }
 
 #define Highest_object_index (Objects.get_count() - 1)
@@ -565,11 +566,29 @@ namespace dsx {
 
 DXX_VALPTRIDX_DEFINE_GLOBAL_FACTORIES(object, obj, Objects);
 
-struct d_level_object_state
+#if defined(DXX_BUILD_DESCENT_II)
+class d_guided_missile_indices : object_number_array<imobjidx_t, MAX_PLAYERS>
+{
+	template <typename R, typename F>
+		R get_player_active_guided_missile_tmpl(F &fvcobj, unsigned pnum) const;
+	static bool debug_check_current_object(const object_base &);
+public:
+	imobjidx_t get_player_active_guided_missile(unsigned pnum) const;
+	imobjptr_t get_player_active_guided_missile(fvmobjptr &vmobjptr, unsigned pnum) const;
+	imobjptridx_t get_player_active_guided_missile(fvmobjptridx &vmobjptridx, unsigned pnum) const;
+	void set_player_active_guided_missile(vmobjidx_t, unsigned pnum);
+	void clear_player_active_guided_missile(unsigned pnum);
+};
+#endif
+
+struct d_level_unique_object_state
 {
 	unsigned num_objects = 0;
 	unsigned Debris_object_count = 0;
-	array<objnum_t, MAX_OBJECTS> free_obj_list;
+#if defined(DXX_BUILD_DESCENT_II)
+	d_guided_missile_indices Guided_missile;
+#endif
+	object_number_array<imobjidx_t, MAX_OBJECTS> free_obj_list;
 	auto &get_objects()
 	{
 		return Objects;
@@ -580,7 +599,7 @@ struct d_level_object_state
 	}
 };
 
-extern d_level_object_state ObjectState;
+extern d_level_unique_object_state LevelUniqueObjectState;
 
 static inline powerup_type_t get_powerup_id(const object_base &o)
 {
@@ -599,7 +618,7 @@ static inline uint8_t get_marker_id(const object_base &o)
 }
 #endif
 
-void set_powerup_id(object_base &o, powerup_type_t id);
+void set_powerup_id(const d_powerup_info_array &Powerup_info, const d_vclip_array &Vclip, object_base &o, powerup_type_t id);
 
 static inline void set_weapon_id(object_base &o, weapon_id_type id)
 {

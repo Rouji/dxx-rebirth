@@ -120,13 +120,12 @@ static ij_pair find_largest_normal(vms_vector t)
 
 //see if a point in inside a face by projecting into 2d
 __attribute_warn_unused_result
-static uint check_point_to_face(const vms_vector &checkp, const side *s,int facenum,int nv, const vertex_array_list_t &vertex_list)
+static unsigned check_point_to_face(const vms_vector &checkp, const vms_vector &norm, const unsigned facenum, const unsigned nv, const vertex_array_list_t &vertex_list)
 {
 ///
 	int edge;
 	uint edgemask;
 	fix check_i,check_j;
-	vms_vector norm = s->normals[facenum];
 	//now do 2d check to see if point is in side
 
 	//project polygon onto plane by finding largest component of normal
@@ -142,6 +141,8 @@ static uint check_point_to_face(const vms_vector &checkp, const side *s,int face
 	check_i = checkp.*ij.i;
 	check_j = checkp.*ij.j;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	for (edge=edgemask=0;edge<nv;edge++) {
 		vec2d edgevec,checkvec;
 		fix64 d;
@@ -165,17 +166,16 @@ static uint check_point_to_face(const vms_vector &checkp, const side *s,int face
 
 }
 
-
 //check if a sphere intersects a face
 __attribute_warn_unused_result
-static int check_sphere_to_face(const vms_vector &pnt, const side *s,int facenum,int nv,fix rad,const vertex_array_list_t &vertex_list)
+static int check_sphere_to_face(const vms_vector &pnt, const vms_vector &normal, const unsigned facenum, const unsigned nv, const fix rad, const vertex_array_list_t &vertex_list)
 {
 	const auto checkp = pnt;
 	uint edgemask;
 
 	//now do 2d check to see if point is in side
 
-	edgemask = check_point_to_face(pnt,s,facenum,nv,vertex_list);
+	edgemask = check_point_to_face(pnt, normal, facenum, nv, vertex_list);
 
 	//we've gone through all the sides, are we inside?
 
@@ -191,6 +191,8 @@ static int check_sphere_to_face(const vms_vector &pnt, const side *s,int facenum
 
 		for (edgenum=0;!(edgemask&1);(edgemask>>=1),edgenum++);
 
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
 		auto &v0 = *vcvertptr(vertex_list[facenum * 3 + edgenum]);
 		auto &v1 = *vcvertptr(vertex_list[facenum * 3 + ((edgenum + 1) % nv)]);
 
@@ -237,12 +239,10 @@ static int check_sphere_to_face(const vms_vector &pnt, const side *s,int facenum
 //facenum determines which of four possible faces we have
 //note: the seg parm is temporary, until the face itself has a point field
 __attribute_warn_unused_result
-static int check_line_to_face(vms_vector &newp,const vms_vector &p0,const vms_vector &p1,const vcsegptridx_t seg,int side,int facenum,int nv,fix rad)
+static int check_line_to_face(vms_vector &newp, const vms_vector &p0, const vms_vector &p1, const shared_segment &seg, const unsigned side, const unsigned facenum, const unsigned nv, const fix rad)
 {
-	const struct side *s=&seg->sides[side];
-	vms_vector norm;
-
-		norm = seg->sides[side].normals[facenum];
+	auto &s = seg.sides[side];
+	const vms_vector &norm = s.normals[facenum];
 
 	const auto v = create_abs_vertex_lists(seg, s, side);
 	const auto &num_faces = v.first;
@@ -258,6 +258,8 @@ static int check_line_to_face(vms_vector &newp,const vms_vector &p0,const vms_ve
 		vertnum = *std::min_element(b, std::next(b, 4));
 	}
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	auto pli = find_plane_line_intersection(newp, vcvertptr(vertnum), norm, p0, p1, rad);
 
 	if (!pli) return IT_NONE;
@@ -269,8 +271,7 @@ static int check_line_to_face(vms_vector &newp,const vms_vector &p0,const vms_ve
 	if (rad!=0)
 		vm_vec_scale_add2(checkp,norm,-rad);
 
-	return check_sphere_to_face(checkp,s,facenum,nv,rad,vertex_list);
-
+	return check_sphere_to_face(checkp, s.normals[facenum], facenum, nv, rad, vertex_list);
 }
 
 //returns the value of a determinant
@@ -314,12 +315,11 @@ static int check_line_to_line(fix *t1,fix *t2,const vms_vector &p1,const vms_vec
 //the plane of a side.  In this case, we must do checks against the edge
 //of faces
 __attribute_warn_unused_result
-static int special_check_line_to_face(vms_vector &newp,const vms_vector &p0,const vms_vector &p1,const vcsegptridx_t seg,int side,int facenum,int nv,fix rad)
+static int special_check_line_to_face(vms_vector &newp, const vms_vector &p0, const vms_vector &p1, const shared_segment &seg, const unsigned side, const unsigned facenum, const unsigned nv, const fix rad)
 {
 	fix edge_t=0,move_t=0,edge_t2=0,move_t2=0;
 	int edgenum;
-	uint edgemask;
-	const struct side *s=&seg->sides[side];
+	auto &s = seg.sides[side];
 
 	//calc some basic stuff
 
@@ -329,13 +329,15 @@ static int special_check_line_to_face(vms_vector &newp,const vms_vector &p0,cons
 
 	//figure out which edge(s) to check against
 
-	edgemask = check_point_to_face(p0,s,facenum,nv,vertex_list);
+	unsigned edgemask = check_point_to_face(p0, s.normals[facenum], facenum, nv, vertex_list);
 
 	if (edgemask == 0)
 		return check_line_to_face(newp,p0,p1,seg,side,facenum,nv,rad);
 
 	for (edgenum=0;!(edgemask&1);edgemask>>=1,edgenum++);
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	auto &edge_v0 = *vcvertptr(vertex_list[facenum * 3 + edgenum]);
 	auto &edge_v1 = *vcvertptr(vertex_list[facenum * 3 + ((edgenum + 1) % nv)]);
 
@@ -579,21 +581,21 @@ static vm_distance_squared check_vector_to_sphere_1(vms_vector &intp,const vms_v
 //determine if a vector intersects with an object
 //if no intersects, returns 0, else fills in intp and returns dist
 __attribute_warn_unused_result
-static vm_distance_squared check_vector_to_object(vms_vector &intp,const vms_vector &p0,const vms_vector &p1,fix rad,const vcobjptr_t obj,const vcobjptr_t otherobj)
+static vm_distance_squared check_vector_to_object(vms_vector &intp, const vms_vector &p0, const vms_vector &p1, const fix rad, const object_base &obj, const object &otherobj)
 {
-	fix size = obj->size;
+	fix size = obj.size;
 
-	if (obj->type == OBJ_ROBOT && Robot_info[get_robot_id(obj)].attack_type)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+	if (obj.type == OBJ_ROBOT && Robot_info[get_robot_id(obj)].attack_type)
 		size = (size*3)/4;
 
 	//if obj is player, and bumping into other player or a weapon of another coop player, reduce radius
-	if (obj->type == OBJ_PLAYER &&
-		 	((otherobj->type == OBJ_PLAYER) ||
-	 		((Game_mode&GM_MULTI_COOP) && otherobj->type == OBJ_WEAPON && otherobj->ctype.laser_info.parent_type == OBJ_PLAYER)))
+	if (obj.type == OBJ_PLAYER &&
+		 	(otherobj.type == OBJ_PLAYER ||
+	 		((Game_mode & GM_MULTI_COOP) && otherobj.type == OBJ_WEAPON && otherobj.ctype.laser_info.parent_type == OBJ_PLAYER)))
 		size = size/2;
 
-	return check_vector_to_sphere_1(intp,p0,p1,obj->pos,size+rad);
-
+	return check_vector_to_sphere_1(intp, p0, p1, obj.pos, size+rad);
 }
 
 
@@ -614,7 +616,7 @@ struct fvi_segments_visited_t : public fvi_segment_visit_count_t, public visited
 }
 
 namespace dsx {
-static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const vcsegptridx_t startseg, const vms_vector &p1, fix rad, const icobjptridx_t thisobjnum, const std::pair<const objnum_t *, const objnum_t *> ignore_obj_list, int flags, fvi_info::segment_array_t &seglist, segnum_t entry_seg, fvi_segments_visited_t &visited, unsigned &fvi_hit_side, icsegidx_t &fvi_hit_side_seg, unsigned &fvi_nest_count, icsegidx_t &fvi_hit_pt_seg, const vms_vector *&wall_norm, icobjidx_t &fvi_hit_object);
+static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const vcsegptridx_t startseg, const vms_vector &p1, fix rad, const icobjptridx_t thisobjnum, const std::pair<const vcobjidx_t *, const vcobjidx_t *> ignore_obj_list, int flags, fvi_info::segment_array_t &seglist, segnum_t entry_seg, fvi_segments_visited_t &visited, unsigned &fvi_hit_side, icsegidx_t &fvi_hit_side_seg, unsigned &fvi_nest_count, icsegidx_t &fvi_hit_pt_seg, const vms_vector *&wall_norm, icobjidx_t &fvi_hit_object);
 
 //What the hell is fvi_hit_seg for???
 
@@ -652,6 +654,8 @@ int find_vector_intersection(const fvi_query &fq, fvi_info &hit_data)
 		return hit_data.hit_type;
 	}
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	// Viewer is not in segment as claimed, so say there is no hit.
 	if(!(get_seg_masks(vcvertptr, *fq.p0, vcsegptr(fq.startseg), 0).centermask == 0))
 	{
@@ -681,7 +685,7 @@ int find_vector_intersection(const fvi_query &fq, fvi_info &hit_data)
 	if (hit_seg2 != segment_none && !get_seg_masks(vcvertptr, hit_pnt, vcsegptr(hit_seg2), 0).centermask)
 		hit_seg = hit_seg2;
 	else
-		hit_seg = find_point_seg(hit_pnt, imsegptridx(fq.startseg));
+		hit_seg = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, hit_pnt, imsegptridx(fq.startseg));
 
 //MATT: TAKE OUT THIS HACK AND FIX THE BUGS!
 	if (hit_type == HIT_WALL && hit_seg==segment_none)
@@ -769,7 +773,7 @@ int find_vector_intersection(const fvi_query &fq, fvi_info &hit_data)
 }
 
 __attribute_warn_unused_result
-static bool obj_in_list(objnum_t objnum,const std::pair<const objnum_t *, const objnum_t *> obj_list)
+static bool obj_in_list(const vcobjidx_t objnum, const std::pair<const vcobjidx_t *, const vcobjidx_t *> obj_list)
 {
 	if (unlikely(!obj_list.first))
 		return false;
@@ -790,7 +794,7 @@ static void append_segments(fvi_info::segment_array_t &dst, const fvi_info::segm
 }
 
 namespace dsx {
-static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const vcsegptridx_t startseg, const vms_vector &p1, fix rad, icobjptridx_t thisobjnum, const std::pair<const objnum_t *, const objnum_t *> ignore_obj_list, int flags, fvi_info::segment_array_t &seglist, segnum_t entry_seg, fvi_segments_visited_t &visited, unsigned &fvi_hit_side, icsegidx_t &fvi_hit_side_seg, unsigned &fvi_nest_count, icsegidx_t &fvi_hit_pt_seg, const vms_vector *&wall_norm, icobjidx_t &fvi_hit_object)
+static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const vcsegptridx_t startseg, const vms_vector &p1, fix rad, icobjptridx_t thisobjnum, const std::pair<const vcobjidx_t *, const vcobjidx_t *> ignore_obj_list, int flags, fvi_info::segment_array_t &seglist, segnum_t entry_seg, fvi_segments_visited_t &visited, unsigned &fvi_hit_side, icsegidx_t &fvi_hit_side_seg, unsigned &fvi_nest_count, icsegidx_t &fvi_hit_pt_seg, const vms_vector *&wall_norm, icobjidx_t &fvi_hit_object)
 {
 	int startmask,endmask;	//mask of faces
 	//@@int sidemask;				//mask of sides - can be on back of face but not side
@@ -801,6 +805,7 @@ static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const
 	segnum_t hit_seg=segment_none;
 	segnum_t hit_none_seg=segment_none;
 	fvi_info::segment_array_t hit_none_seglist;
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 
 	seglist.clear();
 	if (flags&FQ_GET_SEGLIST)
@@ -877,6 +882,8 @@ static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const
 
 	//now, check segment walls
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	startmask = get_seg_masks(vcvertptr, p0, startseg, rad).facemask;
 
 	const auto &&masks = get_seg_masks(vcvertptr, p1, startseg, rad);    //on back of which faces?
@@ -893,7 +900,7 @@ static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const
 		//for each face we are on the back of, check if intersected
 
 		for (side=0,bit=1;side<6 && endmask>=bit;side++) {
-			const unsigned nv = get_side_is_quad(seg->sides[side]) ? 4 : 3;
+			const unsigned nv = get_side_is_quad(seg->shared_segment::sides[side]) ? 4 : 3;
 			// commented out by mk on 02/13/94:: if ((num_faces=seg->sides[side].num_faces)==0) num_faces=1;
 
 			for (face=0;face<2;face++,bit<<=1) {
@@ -922,7 +929,9 @@ static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const
 
 	
 					if (face_hit_type) {            //through this wall/door
-						auto wid_flag = WALL_IS_DOORWAY(seg, side);
+						auto &Walls = LevelUniqueWallSubsystemState.Walls;
+						auto &vcwallptr = Walls.vcptr;
+						auto wid_flag = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, side);
 
 						//if what we have hit is a door, check the adjoining seg
 
@@ -1003,7 +1012,7 @@ static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const
 									closest_d = d;
 									closest_hit_point = hit_point;
 									hit_type = HIT_WALL;
-									wall_norm = &seg->sides[side].normals[face];
+									wall_norm = &seg->shared_segment::sides[side].normals[face];
 									if (get_seg_masks(vcvertptr, hit_point, startseg, rad).centermask == 0)
 										hit_seg = startseg;             //hit in this segment
 									else
@@ -1099,7 +1108,7 @@ quit_looking:
 namespace dsx {
 fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, const vcsegptridx_t seg, const uint_fast32_t sidenum, const uint_fast32_t facenum)
 {
-	const side *side = &seg->sides[sidenum];
+	auto &side = seg->shared_segment::sides[sidenum];
 	fix k0,k1;
 	int i;
 
@@ -1113,7 +1122,7 @@ fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, const vcsegptridx_t seg, co
 
 	//1. find what plane to project this wall onto to make it a 2d case
 
-	const auto &normal_array = side->normals[facenum];
+	const auto &normal_array = side.normals[facenum];
 	auto fmax = [](const vms_vector &v, fix vms_vector::*a, fix vms_vector::*b) {
 		return abs(v.*a) > abs(v.*b) ? a : b;
 	};
@@ -1124,6 +1133,8 @@ fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, const vcsegptridx_t seg, co
 	//2. compute u,v of intersection point
 
 	//vec from 1 -> 0
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	auto &vf1 = *vcvertptr(vn[facenum * 3 + 1].vertex);
 	const vec2d p1{vf1.*ii, vf1.*jj};
 
@@ -1150,8 +1161,9 @@ fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, const vcsegptridx_t seg, co
 		k0 = fixdiv(fixmul(-k1,vec1.j) + checkp.j - p1.j,vec0.j);
 
 	array<uvl, 3> uvls;
+	auto &uside = seg->unique_segment::sides[sidenum];
 	for (i=0;i<3;i++)
-		uvls[i] = side->uvls[vn[facenum*3+i].vertnum];
+		uvls[i] = uside.uvls[vn[facenum * 3 + i].vertnum];
 
 	auto p = [&uvls, k0, k1](fix uvl::*pmf) {
 		return uvls[1].*pmf + fixmul(k0,uvls[0].*pmf - uvls[1].*pmf) + fixmul(k1,uvls[2].*pmf - uvls[1].*pmf);
@@ -1166,19 +1178,24 @@ fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, const vcsegptridx_t seg, co
 //returns 1 if can pass though the wall, else 0
 int check_trans_wall(const vms_vector &pnt,const vcsegptridx_t seg,int sidenum,int facenum)
 {
-	auto *side = &seg->sides[sidenum];
+	auto &side = seg->unique_segment::sides[sidenum];
 	int bmx,bmy;
 
 #if defined(DXX_BUILD_DESCENT_I)
-	Assert(WALL_IS_DOORWAY(seg,sidenum) == WID_TRANSPARENT_WALL);
+#ifndef NDEBUG
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	assert(WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sidenum) == WID_TRANSPARENT_WALL);
+#endif
 #endif
 
 	const auto hitpoint = find_hitpoint_uv(pnt,seg,sidenum,facenum);	//	Don't compute light value.
 	auto &u = hitpoint.u;
 	auto &v = hitpoint.v;
 
-	const grs_bitmap &rbm = (side->tmap_num2 != 0) ? texmerge_get_cached_bitmap( side->tmap_num, side->tmap_num2 ) :
-		GameBitmaps[Textures[PIGGY_PAGE_IN(Textures[side->tmap_num]), side->tmap_num].index];
+	const auto tmap_num = side.tmap_num;
+	const grs_bitmap &rbm = (side.tmap_num2 != 0) ? texmerge_get_cached_bitmap(tmap_num, side.tmap_num2 ) :
+		GameBitmaps[Textures[PIGGY_PAGE_IN(Textures[tmap_num]), tmap_num].index];
 	const auto bm = rle_expand_texture(rbm);
 
 	bmx = static_cast<unsigned>(f2i(u*bm->bm_w)) % bm->bm_w;
@@ -1198,7 +1215,7 @@ int check_trans_wall(const vms_vector &pnt,const vcsegptridx_t seg,int sidenum,i
 
 //new function for Mike
 //note: n_segs_visited must be set to zero before this is called
-static int sphere_intersects_wall(const vms_vector &pnt, const vcsegptridx_t segnum, const fix rad, object_intersects_wall_result_t *const hresult, fvi_segments_visited_t &visited)
+static sphere_intersects_wall_result sphere_intersects_wall(fvcvertptr &vcvertptr, const vms_vector &pnt, const vcsegptridx_t segnum, const fix rad, fvi_segments_visited_t &visited)
 {
 	int facemask;
 	visited[segnum] = true;
@@ -1210,7 +1227,8 @@ static int sphere_intersects_wall(const vms_vector &pnt, const vcsegptridx_t seg
 
 	if (facemask != 0) {				//on the back of at least one face
 
-		int side,bit,face;
+		int bit,face;
+		uint_fast32_t side;
 
 		//for each face we are on the back of, check if intersected
 
@@ -1222,12 +1240,12 @@ static int sphere_intersects_wall(const vms_vector &pnt, const vcsegptridx_t seg
 					int face_hit_type;      //in what way did we hit the face?
 
 					//did we go through this wall/door?
-					const auto *sidep = &seg->sides[side];
+					auto &sidep = seg->shared_segment::sides[side];
 					const auto v = create_abs_vertex_lists(seg, sidep, side);
 					const auto &num_faces = v.first;
 					const auto &vertex_list = v.second;
 
-					face_hit_type = check_sphere_to_face(pnt, sidep,
+					face_hit_type = check_sphere_to_face(pnt, sidep.normals[face],
 										face,((num_faces==1)?4:3),rad,vertex_list);
 
 					if (face_hit_type) {            //through this wall/door
@@ -1237,15 +1255,11 @@ static int sphere_intersects_wall(const vms_vector &pnt, const vcsegptridx_t seg
 
 						if (!IS_CHILD(child))
 						{
-							if (hresult)
-							{
-								hresult->seg = segnum;
-								hresult->side = side;
-							}
-							return 1;
+							return {static_cast<const segment *>(segnum), side};
 						}
 						else if (!visited[child]) {                //haven't visited here yet
-							if (auto r = sphere_intersects_wall(pnt, seg.absolute_sibling(child), rad, hresult, visited))
+							const auto &&r = sphere_intersects_wall(vcvertptr, pnt, seg.absolute_sibling(child), rad, visited);
+							if (r.seg)
 								return r;
 						}
 					}
@@ -1253,22 +1267,11 @@ static int sphere_intersects_wall(const vms_vector &pnt, const vcsegptridx_t seg
 			}
 		}
 	}
-	return 0;
+	return {};
 }
 
-int sphere_intersects_wall(const vms_vector &pnt, const vcsegptridx_t seg, const fix rad, object_intersects_wall_result_t *const hresult)
+sphere_intersects_wall_result sphere_intersects_wall(fvcvertptr &vcvertptr, const vms_vector &pnt, const vcsegptridx_t seg, const fix rad)
 {
 	fvi_segments_visited_t visited;
-	return sphere_intersects_wall(pnt, seg, rad, hresult, visited);
-}
-
-//Returns true if the object is through any walls
-int object_intersects_wall(const vcobjptr_t objp)
-{
-	return sphere_intersects_wall(objp->pos, vcsegptridx(objp->segnum), objp->size, nullptr);
-}
-
-int object_intersects_wall_d(const vcobjptr_t objp, object_intersects_wall_result_t &result)
-{
-	return sphere_intersects_wall(objp->pos, vcsegptridx(objp->segnum), objp->size, &result);
+	return sphere_intersects_wall(vcvertptr, pnt, seg, rad, visited);
 }

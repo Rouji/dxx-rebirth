@@ -40,7 +40,7 @@ struct window_rendered_data
 {
 #if defined(DXX_BUILD_DESCENT_II)
 	fix64   time;
-	object  *viewer;
+	const object *viewer;
 	int     rear_view;
 #endif
 	std::vector<objnum_t> rendered_robots;
@@ -100,7 +100,6 @@ extern uint8_t RenderingType;
 #endif
 
 extern fix flash_scale;
-extern vms_vector Viewer_eye;
 
 #if DXX_USE_EDITOR
 extern int Render_only_bottom;
@@ -115,21 +114,21 @@ void render_start_frame(void);
 
 // Given a list of point numbers, rotate any that haven't been rotated
 // this frame
-g3s_codes rotate_list(std::size_t nv, const unsigned *pointnumlist);
+g3s_codes rotate_list(fvcvertptr &vcvertptr, std::size_t nv, const unsigned *pointnumlist);
 
 template <std::size_t N>
-static inline g3s_codes rotate_list(const array<unsigned, N> &a)
+static inline g3s_codes rotate_list(fvcvertptr &vcvertptr, const array<unsigned, N> &a)
 {
-	return rotate_list(a.size(), &a[0]);
+	return rotate_list(vcvertptr, a.size(), &a[0]);
 }
 
 #ifdef dsx
 namespace dsx {
 void render_frame(grs_canvas &, fix eye_offset, window_rendered_data &);  //draws the world into the current canvas
-void render_mine(grs_canvas &, vcsegidx_t start_seg_num, fix eye_offset, window_rendered_data &);
+void render_mine(grs_canvas &, const vms_vector &, vcsegidx_t start_seg_num, fix eye_offset, window_rendered_data &);
 
 #if defined(DXX_BUILD_DESCENT_II)
-void update_rendered_data(window_rendered_data &window, vmobjptr_t viewer, int rear_view_flag);
+void update_rendered_data(window_rendered_data &window, const object &viewer, int rear_view_flag);
 #endif
 
 static inline void render_frame(grs_canvas &canvas, fix eye_offset)

@@ -248,7 +248,7 @@ int med_rotate_segment(vmsegptridx_t seg, const vms_matrix &rotmat);
 //    Creates wall at sp->sides[side], making it part of segment sp
 //    Removable walls must be placed between two connected segments.  You should add the removable
 //    wall on both sides.  In fact, you really must.
-void create_removable_wall(vmsegptridx_t sp, int side, int tmap_num);
+void create_removable_wall(fvcvertptr &vcvertptr, vmsegptridx_t sp, unsigned side, unsigned tmap_num);
 }
 #endif
 
@@ -339,7 +339,7 @@ extern void delete_curve();
 
 #ifdef dsx
 namespace dsx {
-void med_extract_matrix_from_segment(vcsegptr_t sp,vms_matrix *rotmat);
+void med_extract_matrix_from_segment(const shared_segment &sp, vms_matrix &rotmat);
 
 //	Assign default u,v coordinates to all sides of a segment.
 //	This routine should only be used for segments which are not connected to anything else,
@@ -349,7 +349,7 @@ void assign_default_uvs_to_side(vmsegptridx_t segp, unsigned side);
 
 //	Assign u,v coordinates to con_seg, con_common_side from base_seg, base_common_side
 //	They are connected at the edge defined by the vertices abs_id1, abs_id2.
-void med_assign_uvs_to_side(vmsegptridx_t con_seg, int con_common_side, vmsegptr_t base_seg, int base_common_side, int abs_id1, int abs_id2);
+void med_assign_uvs_to_side(vmsegptridx_t con_seg, unsigned con_common_side, vmsegptr_t base_seg, unsigned base_common_side, unsigned abs_id1, unsigned abs_id2);
 
 //	Create coordinate axes in orientation of specified segment, stores vertices at *vp.
 void create_coordinate_axes_from_segment(vmsegptr_t sp, array<unsigned, 16> &vertnums);
@@ -395,7 +395,7 @@ int med_find_closest_threshold_segment_side(vmsegptridx_t sp, int side, imsegptr
 // If there is no connecting segment on the current side, try any segment.
 
 //	Copy texture maps in newseg to nsp.
-void copy_uvs_seg_to_seg(vmsegptr_t nsp, vcsegptr_t newseg);
+void copy_uvs_seg_to_seg(unique_segment &destseg, const unique_segment &srcseg);
 
 //	Return true if segment is concave.
 
@@ -421,11 +421,11 @@ int med_create_duplicate_vertex(const vertex &vp);
 
 namespace dsx {
 //	Create a new segment, duplicating exactly, including vertex ids and children, the passed segment.
-segnum_t med_create_duplicate_segment(vmsegptr_t sp);
+segnum_t med_create_duplicate_segment(segment_array &, const segment &sp);
 
 //	Returns the index of a free segment.
 //	Scans the Segments array.
-extern segnum_t get_free_segment_number(void);
+segnum_t get_free_segment_number(segment_array &);
 }
 #endif
 

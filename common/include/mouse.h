@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -16,6 +16,7 @@
 #include "maths.h"
 
 #ifdef __cplusplus
+#include <SDL_version.h>
 #include <cassert>
 #include "fwd-window.h"
 #include "event.h"
@@ -70,11 +71,18 @@ public:
 class d_event_mouse_moved : public d_event
 {
 public:
-	const int16_t dx, dy, dz;
-	constexpr d_event_mouse_moved(const event_type t, const int16_t x, const int16_t y, const int16_t z) :
+#if SDL_MAJOR_VERSION == 1
+#define SDL_MOUSE_MOVE_INT_TYPE	Sint16
+#elif SDL_MAJOR_VERSION == 2
+#define SDL_MOUSE_MOVE_INT_TYPE	Sint32
+#endif
+	const SDL_MOUSE_MOVE_INT_TYPE dx, dy;
+	const int16_t dz;
+	constexpr d_event_mouse_moved(const event_type t, const SDL_MOUSE_MOVE_INT_TYPE x, const SDL_MOUSE_MOVE_INT_TYPE y, const int16_t z) :
 		d_event(t), dx(x), dy(y), dz(z)
 	{
 	}
+#undef SDL_MOUSE_MOVE_INT_TYPE
 };
 
 static inline int event_mouse_get_button(const d_event &event)

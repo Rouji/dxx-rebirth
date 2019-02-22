@@ -71,7 +71,7 @@ imobjptridx_t create_morph_robot(vmsegptridx_t segp, const vms_vector &object_po
 
 // Returns the amount of fuel/shields this segment can give up.
 // Can be from 0 to 100.
-fix fuelcen_give_fuel(vcsegptr_t segp, fix MaxAmountCanTake);
+fix fuelcen_give_fuel(const shared_segment &segp, fix MaxAmountCanTake);
 }
 
 // Call once per frame.
@@ -81,9 +81,8 @@ void fuelcen_update_all();
 //--repair-- int refuel_do_repair_effect( object * obj, int first_time, int repair_seg );
 
 namespace dsx {
-#define MAX_NUM_FUELCENS 128 // Original D1: 50, Original D2: 70
 #if defined(DXX_BUILD_DESCENT_II)
-fix repaircen_give_shields(vcsegptr_t segp, fix MaxAmountCanTake);
+fix repaircen_give_shields(const shared_segment &segp, fix MaxAmountCanTake);
 #endif
 }
 #endif
@@ -96,6 +95,8 @@ fix repaircen_give_shields(vcsegptr_t segp, fix MaxAmountCanTake);
 //--repair--
 //--repair-- //if repairing, cut it short
 //--repair-- abort_repair_center();
+
+namespace dcx {
 
 // An array of pointers to segments with fuel centers.
 struct FuelCenter : public prohibit_void_ptr<FuelCenter>
@@ -111,14 +112,23 @@ struct FuelCenter : public prohibit_void_ptr<FuelCenter>
 };
 
 // The max number of robot centers per mine.
-#define MAX_ROBOT_CENTERS  128 // Original D1/D2: 20
-
 struct d1_matcen_info : public prohibit_void_ptr<d1_matcen_info>
 {
 	array<unsigned, 1>     robot_flags;    // Up to 32 different robots
 	segnum_t   segnum;         // Segment this is attached to.
 	short   fuelcen_num;    // Index in fuelcen array.
 };
+
+struct d_level_unique_fuelcenter_state
+{
+	unsigned Num_fuelcenters;
+	// Original D1 size: 50, Original D2 size: 70
+	array<FuelCenter, 128> Station;
+};
+
+extern d_level_unique_fuelcenter_state LevelUniqueFuelcenterState;
+
+}
 
 #ifdef dsx
 namespace dsx {
@@ -138,8 +148,13 @@ void matcen_info_read(PHYSFS_File *fp, matcen_info &ps);
 
 extern const char Special_names[MAX_CENTER_TYPES][11];
 
-extern array<matcen_info, MAX_ROBOT_CENTERS> RobotCenters;
-extern array<FuelCenter, MAX_NUM_FUELCENS> Station;
+struct d_level_shared_robotcenter_state
+{
+	// Original D1/D2 size: 20
+	array<matcen_info, 128> RobotCenters;
+};
+
+extern d_level_shared_robotcenter_state LevelSharedRobotcenterState;
 
 // Called when a materialization center gets triggered by the player
 // flying through some trigger!
@@ -153,7 +168,7 @@ extern void init_all_matcens(void);
  * reads a matcen_info structure from a PHYSFS_File
  */
 #if defined(DXX_BUILD_DESCENT_II)
-void fuelcen_check_for_hoard_goal(vcsegptr_t segp);
+void fuelcen_check_for_hoard_goal(object &plrobj, const shared_segment &segp);
 
 /*
  * reads an d1_matcen_info structure from a PHYSFS_File
@@ -167,7 +182,6 @@ void matcen_info_write(PHYSFS_File *fp, const matcen_info &mi, short version);
 namespace dcx {
 constexpr std::integral_constant<uint8_t, 0xff> station_none{};
 extern unsigned Num_robot_centers;
-extern unsigned Num_fuelcenters;
 extern const fix EnergyToCreateOneRobot;
 }
 #endif

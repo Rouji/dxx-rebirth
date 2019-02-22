@@ -43,7 +43,7 @@ unsigned 					Num_vclips;
 }
 
 namespace dsx {
-array<vclip, VCLIP_MAXNUM> 				Vclip;		// General purpose vclips.
+d_vclip_array Vclip;		// General purpose vclips.
 
 //draw an object which renders as a vclip
 void draw_vclip_object(grs_canvas &canvas, const vcobjptridx_t obj, const fix timeleft, const int lighted, const vclip &vc)
@@ -64,7 +64,7 @@ void draw_vclip_object(grs_canvas &canvas, const vcobjptridx_t obj, const fix ti
 	}
 }
 
-void draw_weapon_vclip(grs_canvas &canvas, const vcobjptridx_t obj)
+void draw_weapon_vclip(const d_vclip_array &Vclip, const weapon_info_array &Weapon_info, grs_canvas &canvas, const vcobjptridx_t obj)
 {
 	Assert(obj->type == OBJ_WEAPON);
 

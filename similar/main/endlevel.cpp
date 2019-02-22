@@ -106,6 +106,8 @@ struct flythrough_data
 
 #define MAX_FLY_OBJECTS 2
 
+d_unique_endlevel_state UniqueEndlevelState;
+
 }
 
 static array<flythrough_data, MAX_FLY_OBJECTS> fly_objects;
@@ -132,9 +134,9 @@ static object *endlevel_camera;
 #define FLY_SPEED i2f(50)
 
 static void do_endlevel_flythrough(flythrough_data *flydata);
-static void draw_stars(grs_canvas &);
+static void draw_stars(grs_canvas &, const d_unique_endlevel_state::starfield_type &stars);
 static int find_exit_side(const object_base &obj);
-static void generate_starfield();
+static void generate_starfield(d_unique_endlevel_state::starfield_type &stars);
 static void start_endlevel_flythrough(flythrough_data *flydata,const vmobjptr_t obj,fix speed);
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -181,7 +183,7 @@ static fixang delta_ang(fixang a,fixang b)
 }
 
 //return though which side of seg0 is seg1
-static size_t matt_find_connect_side(const segment &seg0, const vcsegidx_t seg1)
+static size_t matt_find_connect_side(const shared_segment &seg0, const vcsegidx_t seg1)
 {
 	auto &children = seg0.children;
 	return std::distance(children.begin(), std::find(children.begin(), children.end(), seg1));
@@ -236,23 +238,6 @@ void free_endlevel_data()
 	free_height_array();
 }
 
-void init_endlevel()
-{
-	//##satellite_bitmap = bm_load("earth.bbm");
-	//##terrain_bitmap = bm_load("moon.bbm");
-	//##
-	//##load_terrain("matt5b.bbm");		//load bitmap as height array
-	//##//load_terrain("ttest2.bbm");		//load bitmap as height array
-
-//!!	exit_bitmap = bm_load("steel1.bbm");
-//!!	exit_bitmap_list[0] = &exit_bitmap;
-
-//!!	exit_modelnum = load_polygon_model("exit01.pof",1,exit_bitmap_list,NULL);
-//!!	destroyed_exit_modelnum = load_polygon_model("exit01d.pof",1,exit_bitmap_list,NULL);
-
-	generate_starfield();
-}
-
 static object *external_explosion;
 static int ext_expl_playing,mine_destroyed;
 
@@ -289,6 +274,7 @@ window_event_result start_endlevel_sequence()
 	con_puts(CON_NORMAL, "You have escaped the mine!");
 
 #if defined(DXX_BUILD_DESCENT_II)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	//	Dematerialize Buddy!
 	range_for (const auto &&objp, vmobjptr)
 	{
@@ -416,7 +402,7 @@ window_event_result start_endlevel_sequence()
 
 	flash_scale = f1_0;
 
-	//init_endlevel();
+	generate_starfield(UniqueEndlevelState.stars);
 
 	mine_destroyed=0;
 
@@ -596,7 +582,7 @@ window_event_result do_endlevel_frame()
 			vm_vec_scale_add2(tpnt,ConsoleObject->orient.rvec,(d_rand()-D_RAND_MAX/2)*15);
 			vm_vec_scale_add2(tpnt,ConsoleObject->orient.uvec,(d_rand()-D_RAND_MAX/2)*15);
 
-			const auto &&segnum = find_point_seg(tpnt, vmsegptridx(ConsoleObject->segnum));
+			const auto &&segnum = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, tpnt, Segments.vmptridx(ConsoleObject->segnum));
 
 			if (segnum != segment_none) {
 				object_create_explosion(segnum,tpnt,i2f(20),VCLIP_BIG_PLAYER_EXPLOSION);
@@ -865,14 +851,17 @@ static int find_exit_side(const object_base &obj)
 
 	vm_vec_normalized_dir_quick(prefvec, obj.pos, obj.last_pos);
 
-	const auto &&pseg = vcsegptr(obj.segnum);
+	auto &pseg = *vcsegptr(obj.segnum);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	const auto segcenter = compute_segment_center(vcvertptr, pseg);
 
 	best_side=-1;
 	for (int i=MAX_SIDES_PER_SEGMENT;--i >= 0;) {
 		fix d;
 
-		if (pseg->children[i]!=segment_none) {
+		if (pseg.children[i] != segment_none)
+		{
 			auto sidevec = compute_center_point_on_side(vcvertptr, pseg, i);
 			vm_vec_normalized_dir_quick(sidevec,sidevec,segcenter);
 			d = vm_vec_dot(sidevec,prefvec);
@@ -915,7 +904,7 @@ static void render_external_scene(fvcobjptridx &vcobjptridx, grs_canvas &canvas,
 #endif
 	g3s_lrgb lrgb = { f1_0, f1_0, f1_0 };
 
-	Viewer_eye = Viewer->pos;
+	auto Viewer_eye = Viewer->pos;
 
 	if (eye_offset)
 		vm_vec_scale_add2(Viewer_eye,Viewer->orient.rvec,eye_offset);
@@ -926,7 +915,7 @@ static void render_external_scene(fvcobjptridx &vcobjptridx, grs_canvas &canvas,
 	gr_clear_canvas(canvas, BM_XRGB(0,0,0));
 
 	g3_start_instance_matrix(vmd_zero_vector, surface_orient);
-	draw_stars(canvas);
+	draw_stars(canvas, UniqueEndlevelState.stars);
 	g3_done_instance();
 
 	{	//draw satellite
@@ -954,7 +943,7 @@ static void render_external_scene(fvcobjptridx &vcobjptridx, grs_canvas &canvas,
 	ogl_toggle_depth_test(0);
 	Render_depth = (200-(vm_vec_dist_quick(mine_ground_exit_point, Viewer_eye)/F1_0))/36;
 #endif
-	render_terrain(canvas, mine_ground_exit_point, exit_point_bmx, exit_point_bmy);
+	render_terrain(canvas, Viewer_eye, mine_ground_exit_point, exit_point_bmx, exit_point_bmy);
 #if DXX_USE_OGL
 	Render_depth = orig_Render_depth;
 	ogl_toggle_depth_test(1);
@@ -966,7 +955,7 @@ static void render_external_scene(fvcobjptridx &vcobjptridx, grs_canvas &canvas,
 		const auto alpha = PlayerCfg.AlphaBlendMineExplosion;
 		if (alpha) // set nice transparency/blending for the big explosion
 			gr_settransblend(canvas, GR_FADE_OFF, GR_BLEND_ADDITIVE_C);
-		draw_fireball(canvas, vcobjptridx(external_explosion));
+		draw_fireball(Vclip, canvas, vcobjptridx(external_explosion));
 #if DXX_USE_OGL
 		/* If !OGL, the third argument is discarded, so this call
 		 * becomes the same as the one above.
@@ -985,9 +974,7 @@ static void render_external_scene(fvcobjptridx &vcobjptridx, grs_canvas &canvas,
 #endif
 }
 
-static array<vms_vector, 500> stars;
-
-static void generate_starfield()
+static void generate_starfield(d_unique_endlevel_state::starfield_type &stars)
 {
 	range_for (auto &i, stars)
 	{
@@ -997,7 +984,7 @@ static void generate_starfield()
 	}
 }
 
-void draw_stars(grs_canvas &canvas)
+void draw_stars(grs_canvas &canvas, const d_unique_endlevel_state::starfield_type &stars)
 {
 	int intensity=31;
 	g3s_point p;
@@ -1052,9 +1039,11 @@ void draw_stars(grs_canvas &canvas)
 
 }
 
-static void endlevel_render_mine(fvmsegptridx &vmsegptridx, grs_canvas &canvas, fix eye_offset)
+namespace dsx {
+
+static void endlevel_render_mine(const d_level_shared_segment_state &LevelSharedSegmentState, grs_canvas &canvas, fix eye_offset)
 {
-	Viewer_eye = Viewer->pos;
+	auto Viewer_eye = Viewer->pos;
 
 	if (Viewer->type == OBJ_PLAYER )
 		vm_vec_scale_add2(Viewer_eye,Viewer->orient.fvec,(Viewer->size*3)/4);
@@ -1073,7 +1062,7 @@ static void endlevel_render_mine(fvmsegptridx &vmsegptridx, grs_canvas &canvas, 
 		start_seg_num = exit_segnum;
 	}
 	else {
-		start_seg_num = find_point_seg(Viewer_eye, vmsegptridx(Viewer->segnum));
+		start_seg_num = find_point_seg(LevelSharedSegmentState, Viewer_eye, Segments.vcptridx(Viewer->segnum));
 
 		if (start_seg_num==segment_none)
 			start_seg_num = Viewer->segnum;
@@ -1084,7 +1073,9 @@ static void endlevel_render_mine(fvmsegptridx &vmsegptridx, grs_canvas &canvas, 
 		: Viewer->orient, Render_zoom);
 
 	window_rendered_data window;
-	render_mine(canvas, start_seg_num, eye_offset, window);
+	render_mine(canvas, Viewer_eye, start_seg_num, eye_offset, window);
+}
+
 }
 
 void render_endlevel_frame(grs_canvas &canvas, fix eye_offset)
@@ -1092,7 +1083,7 @@ void render_endlevel_frame(grs_canvas &canvas, fix eye_offset)
 	g3_start_frame(canvas);
 
 	if (Endlevel_sequence < EL_OUTSIDE)
-		endlevel_render_mine(vmsegptridx, canvas, eye_offset);
+		endlevel_render_mine(LevelSharedSegmentState, canvas, eye_offset);
 	else
 		render_external_scene(vcobjptridx, canvas, eye_offset);
 
@@ -1147,8 +1138,8 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 
 	//check new player seg
 
-	update_object_seg(obj);
-	const auto &&pseg = vmsegptr(obj->segnum);
+	update_object_seg(vmobjptr, LevelSharedSegmentState, LevelUniqueSegmentState, obj);
+	auto &pseg = *vcsegptr(obj->segnum);
 
 	if (flydata->first_time || obj->segnum != old_player_seg) {		//moved into new seg
 		fix seg_time;
@@ -1165,13 +1156,13 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 			exit_side = Side_opposite[entry_side];
 		}
 
-		if (flydata->first_time || entry_side == side_none || pseg->children[exit_side] == segment_none)
+		if (flydata->first_time || entry_side == side_none || pseg.children[exit_side] == segment_none)
 			exit_side = find_exit_side(obj);
 
 		{										//find closest side to align to
 			fix d,largest_d=-f1_0;
 			for (int i=0;i<6;i++) {
-				d = vm_vec_dot(pseg->sides[i].normals[0],flydata->obj->orient.uvec);
+				d = vm_vec_dot(pseg.shared_segment::sides[i].normals[0], flydata->obj->orient.uvec);
 				if (d > largest_d) {largest_d = d; up_side=i;}
 			}
 
@@ -1180,10 +1171,12 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 		//update target point & angles
 
 		//where we are heading (center of exit_side)
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
 		auto dest_point = compute_center_point_on_side(vcvertptr, pseg, exit_side);
-		const vms_vector nextcenter = (pseg->children[exit_side] == segment_exit)
+		const vms_vector nextcenter = (pseg.children[exit_side] == segment_exit)
 			? dest_point
-			: compute_segment_center(vcvertptr, vcsegptr(pseg->children[exit_side]));
+			: compute_segment_center(vcvertptr, vcsegptr(pseg.children[exit_side]));
 
 		//update target point and movement points
 
@@ -1221,7 +1214,7 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 		const auto curcenter = compute_segment_center(vcvertptr, pseg);
 		vm_vec_sub(flydata->headvec,nextcenter,curcenter);
 
-		const auto dest_orient = vm_vector_2_matrix(flydata->headvec,&pseg->sides[up_side].normals[0],nullptr);
+		const auto dest_orient = vm_vector_2_matrix(flydata->headvec,&pseg.shared_segment::sides[up_side].normals[0],nullptr);
 		//where we want to be pointing
 		const auto dest_angles = vm_extract_angles_matrix(dest_orient);
 
@@ -1244,10 +1237,6 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 
 	flydata->first_time=0;
 }
-
-#define JOY_NULL 15
-#define ROT_SPEED 8		//rate of rotation while key held down
-#define VEL_SPEED (15)	//rate of acceleration while key held down
 
 #include "key.h"
 #include "joy.h"
@@ -1460,8 +1449,10 @@ try_again:
 	Assert(exit_segnum!=segment_none);
 
 	const auto &&exit_seg = vmsegptr(exit_segnum);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	compute_segment_center(vcvertptr, mine_exit_point, exit_seg);
-	extract_orient_from_segment(&mine_exit_orient, exit_seg);
+	extract_orient_from_segment(vcvertptr, mine_exit_orient, exit_seg);
 	compute_center_point_on_side(vcvertptr, mine_side_exit_point, exit_seg, exit_side);
 
 	vm_vec_scale_add(mine_ground_exit_point,mine_exit_point,mine_exit_orient.uvec,-i2f(20));

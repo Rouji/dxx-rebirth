@@ -19,11 +19,16 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #pragma once
 
+#include <SDL_version.h>
+#if SDL_MAJOR_VERSION == 2
+#include <SDL_video.h>
+#endif
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include "palette.h"
 #include "maths.h"
+#include "u_mem.h"
 
 // some defines for transparency and blending
 #define TRANSPARENCY_COLOR   255            // palette entry of transparency color -- 255 on the PC
@@ -86,7 +91,6 @@ enum bm_mode : uint8_t
 struct grs_bitmap;
 struct grs_canvas;
 #define GRS_FONT_SIZE 28    // how much space it takes up on disk
-struct grs_font;
 struct grs_point;
 
 union screen_mode;
@@ -105,13 +109,20 @@ typedef std::unique_ptr<grs_subcanvas> grs_subcanvas_ptr;
 class grs_main_bitmap;
 typedef std::unique_ptr<grs_main_bitmap> grs_bitmap_ptr;
 
+struct grs_font;
+
+#if SDL_MAJOR_VERSION == 1
 uint_fast32_t gr_list_modes(array<screen_mode, 50> &modes);
+#elif SDL_MAJOR_VERSION == 2
+extern SDL_Window *g_pRebirthSDLMainWindow;
+#endif
 
 }
 
 #ifdef dsx
 namespace dsx {
 int gr_set_mode(screen_mode mode);
+void gr_set_mode_from_window_size();
 
 int gr_init();
 #if DXX_USE_OGL
@@ -143,7 +154,8 @@ void gr_clear_canvas(grs_canvas &, color_t color);
 // Bitmap functions:
 
 // these are the two workhorses, the others just use these
-void gr_init_bitmap(grs_bitmap &bm, bm_mode mode, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bytesperline, const uint8_t* data);
+void gr_init_bitmap(grs_bitmap &bm, bm_mode mode, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bytesperline, const uint8_t *data) noexcept;
+void gr_init_main_bitmap(grs_main_bitmap &bm, bm_mode mode, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bytesperline, RAIIdmem<uint8_t[]> data);
 void gr_init_sub_bitmap (grs_bitmap &bm, grs_bitmap &bmParent, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 
 void gr_init_bitmap_alloc(grs_main_bitmap &bm, bm_mode mode, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bytesperline);
@@ -282,6 +294,7 @@ void gr_printt(grs_canvas &, const grs_font &, int x, int y, const char *format,
 #define gr_uprintf(A1,A2,A3,A4,F,...)	dxx_call_printf_checked(gr_printfus,gr_ustring,(A1,A2,A3,A4),(F),##__VA_ARGS__)
 std::pair<const char *, unsigned> gr_get_string_wrap(const grs_font &, const char *s, unsigned limit);
 void gr_get_string_size(const grs_font &, const char *s, int *string_width, int *string_height, int *average_width);
+void gr_get_string_size(const grs_font &, const char *s, int *string_width, int *string_height, int *average_width, const unsigned max_chars_per_line);
 
 // From scale.c
 void scale_bitmap(const grs_bitmap &bp, const array<grs_point, 3> &vertbuf, int orientation, grs_bitmap &);

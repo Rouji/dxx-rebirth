@@ -31,16 +31,24 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #ifdef __cplusplus
 #include "fwd-object.h"
 #include "fwd-segment.h"
-
-struct g3s_lrgb;
+#include "3d.h"
 
 #define MAX_LIGHT       0x10000     // max value
 
 #define MIN_LIGHT_DIST  (F1_0*4)
 
-extern array<g3s_lrgb, MAX_VERTICES> Dynamic_light;
+namespace dcx {
+
+struct d_level_unique_light_state
+{
+	array<g3s_lrgb, MAX_VERTICES> Dynamic_light;
+};
+extern d_level_unique_light_state LevelUniqueLightState;
+
+}
+
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
-extern object *old_viewer;
+extern const object *old_viewer;
 
 // compute the lighting for an object.  Takes a pointer to the object,
 // and possibly a rotated 3d point.  If the point isn't specified, the
@@ -53,7 +61,7 @@ namespace dsx {
 void toggle_headlight_active(object &);
 #endif
 }
-void start_lighting_frame(vmobjptr_t viewer);
+void start_lighting_frame(const object &viewer);
 #endif
 
 #endif

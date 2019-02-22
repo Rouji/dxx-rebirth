@@ -589,9 +589,9 @@ static void show_extra_views()
 			DemoDoingLeft=DemoDoLeft;
 
 			if (DemoDoLeft==3)
-				do_cockpit_window_view(0, vmobjptr(ConsoleObject), 1, WBU_REAR, "REAR");
+				do_cockpit_window_view(0, *ConsoleObject, 1, WBU_REAR, "REAR");
 			else
-				do_cockpit_window_view(0, vmobjptr(&DemoLeftExtra), DemoRearCheck[DemoDoLeft], DemoWBUType[DemoDoLeft], DemoExtraMessage[DemoDoLeft], DemoDoLeft == 1 ? &get_local_plrobj().ctype.player_info : nullptr);
+				do_cockpit_window_view(0, DemoLeftExtra, DemoRearCheck[DemoDoLeft], DemoWBUType[DemoDoLeft], DemoExtraMessage[DemoDoLeft], DemoDoLeft == 1 ? &get_local_plrobj().ctype.player_info : nullptr);
 		}
 		else
 			do_cockpit_window_view(0,WBU_WEAPON);
@@ -601,10 +601,10 @@ static void show_extra_views()
 			DemoDoingRight=DemoDoRight;
 			
 			if (DemoDoRight==3)
-				do_cockpit_window_view(1, vmobjptr(ConsoleObject), 1, WBU_REAR, "REAR");
+				do_cockpit_window_view(1, *ConsoleObject, 1, WBU_REAR, "REAR");
 			else
 			{
-				do_cockpit_window_view(1, vmobjptr(&DemoRightExtra), DemoRearCheck[DemoDoRight], DemoWBUType[DemoDoRight], DemoExtraMessage[DemoDoRight], DemoDoLeft == 1 ? &get_local_plrobj().ctype.player_info : nullptr);
+				do_cockpit_window_view(1, DemoRightExtra, DemoRearCheck[DemoDoRight], DemoWBUType[DemoDoRight], DemoExtraMessage[DemoDoRight], DemoDoLeft == 1 ? &get_local_plrobj().ctype.player_info : nullptr);
 			}
 		}
 		else
@@ -615,37 +615,31 @@ static void show_extra_views()
 		return;
 	}
 
-	if (Guided_missile[Player_num] &&
-		Guided_missile[Player_num]->type == OBJ_WEAPON &&
-		get_weapon_id(*Guided_missile[Player_num]) == weapon_id_type::GUIDEDMISS_ID &&
-		Guided_missile[Player_num]->signature == Guided_missile_sig[Player_num])
+	auto &Objects = LevelUniqueObjectState.get_objects();
+	auto &vmobjptr = Objects.vmptr;
+	const auto &&gimobj = LevelUniqueObjectState.Guided_missile.get_player_active_guided_missile(vmobjptr, Player_num);
+	if (gimobj != nullptr)
 	{
 		if (PlayerCfg.GuidedInBigWindow)
 		{
 			RenderingType=6+(1<<4);
-			do_cockpit_window_view(1, vmobjptr(Viewer), 0, WBU_MISSILE, "SHIP");
+			do_cockpit_window_view(1, *Viewer, 0, WBU_MISSILE, "SHIP");
 		}
 		else
 		{
 			RenderingType=1+(1<<4);
 			auto &player_info = get_local_plrobj().ctype.player_info;
-			do_cockpit_window_view(1, vmobjptr(Guided_missile[Player_num]), 0, WBU_GUIDED, "GUIDED", &player_info);
+			do_cockpit_window_view(1, *gimobj, 0, WBU_GUIDED, "GUIDED", &player_info);
 		}
 			
 		did_missile_view=1;
 	}
 	else {
-
-		if (Guided_missile[Player_num]) {		//used to be active
-			if (!PlayerCfg.GuidedInBigWindow)
-				do_cockpit_window_view(1,WBU_STATIC);
-			Guided_missile[Player_num] = NULL;
-		}
 		if (choose_missile_viewer())
 		//do missile view
 			{
   				RenderingType=2+(1<<4);
-				do_cockpit_window_view(1, vmobjptr(Missile_viewer), 0, WBU_MISSILE, get_missile_name(get_weapon_id(*Missile_viewer)));
+				do_cockpit_window_view(1, *Missile_viewer, 0, WBU_MISSILE, get_missile_name(get_weapon_id(*Missile_viewer)));
 				did_missile_view=1;
 			}
 			else {
@@ -668,6 +662,7 @@ static void show_extra_views()
 
 static void show_one_extra_view(const int w)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 		//show special views if selected
 		switch (PlayerCfg.Cockpit3DView[w]) {
 			case CV_NONE:
@@ -689,18 +684,18 @@ static void show_one_extra_view(const int w)
 						rear_view_flag = 1;
 						label = "REAR";
 					}
-					do_cockpit_window_view(w, vmobjptr(ConsoleObject), rear_view_flag, WBU_REAR, label);
+					do_cockpit_window_view(w, *ConsoleObject, rear_view_flag, WBU_REAR, label);
 				}
 			 	break;
 			case CV_ESCORT: {
-				auto buddy = find_escort();
+				const auto &&buddy = find_escort(vmobjptridx, Robot_info);
 				if (buddy == object_none) {
 					do_cockpit_window_view(w,WBU_WEAPON);
 					PlayerCfg.Cockpit3DView[w] = CV_NONE;
 				}
 				else {
 					RenderingType=4+(w<<4);
-					do_cockpit_window_view(w,buddy,0,WBU_ESCORT,PlayerCfg.GuidebotName);
+					do_cockpit_window_view(w, *buddy, 0, WBU_ESCORT, PlayerCfg.GuidebotName);
 				}
 				break;
 			}
@@ -712,7 +707,7 @@ static void show_one_extra_view(const int w)
 				if (player < Players.size() && vcplayerptr(player)->connected && ((Game_mode & GM_MULTI_COOP) || ((Game_mode & GM_TEAM) && (get_team(player) == get_team(Player_num)))))
 				{
 					auto &p = *vcplayerptr(player);
-					do_cockpit_window_view(w, vmobjptr(p.objnum), 0, WBU_COOP, p.callsign);
+					do_cockpit_window_view(w, *vcobjptr(p.objnum), 0, WBU_COOP, p.callsign);
 				}
 				else {
 					do_cockpit_window_view(w,WBU_WEAPON);
@@ -736,7 +731,7 @@ static void show_one_extra_view(const int w)
 					break;
 				}
 				snprintf(label, sizeof(label), "Marker %u", mvn + 1);
-				do_cockpit_window_view(w, vmobjptr(mo), 0, WBU_MARKER, label);
+				do_cockpit_window_view(w, *vcobjptr(mo), 0, WBU_MARKER, label);
 				break;
 			}
 			default:
@@ -756,13 +751,12 @@ void game_render_frame_mono()
 
 	gr_set_current_canvas(Screen_3d_window);
 #if defined(DXX_BUILD_DESCENT_II)
-	if (PlayerCfg.GuidedInBigWindow &&
-		Guided_missile[Player_num] &&
-		Guided_missile[Player_num]->type == OBJ_WEAPON &&
-		get_weapon_id(*Guided_missile[Player_num]) == weapon_id_type::GUIDEDMISS_ID &&
-		Guided_missile[Player_num]->signature == Guided_missile_sig[Player_num])
+	if (const auto &&gimobj = (
+			PlayerCfg.GuidedInBigWindow
+			? LevelUniqueObjectState.Guided_missile.get_player_active_guided_missile(LevelUniqueObjectState.get_objects().vmptr, Player_num)
+			: nullptr))
 	{
-		object *viewer_save = Viewer;
+		const auto viewer_save = Viewer;
 
 		if (PlayerCfg.CockpitMode[1]==CM_FULL_COCKPIT || PlayerCfg.CockpitMode[1]==CM_REAR_VIEW)
 		{
@@ -772,13 +766,13 @@ void game_render_frame_mono()
 			 return;
 		}
 
-		Viewer = Guided_missile[Player_num];
+		Viewer = gimobj;
 
 		window_rendered_data window;
-		update_rendered_data(window, vmobjptr(Viewer), 0);
+		update_rendered_data(window, *Viewer, 0);
 		render_frame(*grd_curcanv, 0, window);
 
-		wake_up_rendered_objects(vmobjptr(Viewer), window);
+		wake_up_rendered_objects(*Viewer, window);
 		show_HUD_names(*grd_curcanv);
 
 		Viewer = viewer_save;
@@ -809,7 +803,7 @@ void game_render_frame_mono()
 #endif
 		window_rendered_data window;
 #if defined(DXX_BUILD_DESCENT_II)
-		update_rendered_data(window, vmobjptr(Viewer), Rear_view);
+		update_rendered_data(window, *Viewer, Rear_view);
 #endif
 		render_frame(*grd_curcanv, 0, window);
 	}

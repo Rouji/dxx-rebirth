@@ -148,7 +148,7 @@ static void powerup_grab_cheat_all();
 #if defined(DXX_BUILD_DESCENT_II)
 d_flickering_light_state Flickering_light_state;
 static void slide_textures(void);
-static void flicker_lights(d_flickering_light_state &fls, fvmsegptridx &vmsegptridx);
+static void flicker_lights(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, d_flickering_light_state &fls, fvmsegptridx &vmsegptridx);
 #endif
 
 // Cheats
@@ -303,6 +303,7 @@ int set_screen_mode(int sm)
 
 	Screen_mode = sm;
 
+#if SDL_MAJOR_VERSION == 1
 	switch( Screen_mode )
 	{
 		case SCREEN_MENU:
@@ -347,6 +348,7 @@ int set_screen_mode(int sm)
 		default:
 			Error("Invalid screen mode %d",sm);
 	}
+#endif
 	return 1;
 }
 
@@ -510,15 +512,19 @@ void calc_frame_time()
 
 namespace dsx {
 
-void move_player_2_segment(const vmsegptridx_t seg,int side)
+#if DXX_USE_EDITOR
+void move_player_2_segment(const vmsegptridx_t seg, const unsigned side)
 {
 	const auto &&console = vmobjptridx(ConsoleObject);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	compute_segment_center(vcvertptr, console->pos, seg);
 	auto vp = compute_center_point_on_side(vcvertptr, seg, side);
 	vm_vec_sub2(vp, console->pos);
 	vm_vector_2_matrix(console->orient, vp, nullptr, nullptr);
 	obj_relink(vmobjptr, vmsegptr, console, seg);
 }
+#endif
 
 }
 
@@ -911,8 +917,8 @@ static void do_cloak_stuff(void)
 {
 	range_for (auto &&e, enumerate(partial_range(Players, N_players)))
 	{
-		const auto &&plobj = vmobjptr(e.value.objnum);
-		auto &player_info = plobj->ctype.player_info;
+		auto &plobj = *vmobjptr(e.value.objnum);
+		auto &player_info = plobj.ctype.player_info;
 		auto &pl_flags = player_info.powerup_flags;
 		if (pl_flags & PLAYER_FLAGS_CLOAKED)
 		{
@@ -1246,8 +1252,17 @@ static int free_help(newmenu *, const d_event &event, newmenu_item *items)
 	DXX_MENUITEM(VERB, TEXT, "Alt-F2/F3 (\x85-SHIFT-s/o)\t  SAVE/LOAD GAME", HELP_AF2_3)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F2/F3 (\x85-s/o)\t  Quick Save/Load", HELP_ASF2_3)
 #define _DXX_HELP_MENU_PAUSE(VERB) DXX_MENUITEM(VERB, TEXT, "Pause (\x85-P)\t  Pause", HELP_PAUSE)
-#define _DXX_HELP_MENU_AUDIO(VERB)	\
+
+#if DXX_USE_SDL_REDBOOK_AUDIO
+#define _DXX_HELP_MENU_AUDIO_REDBOOK(VERB)	\
 	DXX_MENUITEM(VERB, TEXT, "\x85-E\t  Eject Audio CD", HELP_ASF9)	\
+
+#else
+#define _DXX_HELP_MENU_AUDIO_REDBOOK(VERB)
+#endif
+
+#define _DXX_HELP_MENU_AUDIO(VERB)	\
+	_DXX_HELP_MENU_AUDIO_REDBOOK(VERB)	\
 	DXX_MENUITEM(VERB, TEXT, "\x85-Up/Down\t  Play/Pause " EXT_MUSIC_TEXT, HELP_ASF10)	\
 	DXX_MENUITEM(VERB, TEXT, "\x85-Left/Right\t  Previous/Next Song", HELP_ASF11_12)
 #define _DXX_HELP_MENU_HINT_CMD_KEY(VERB, PREFIX)	\
@@ -1260,8 +1275,17 @@ static int free_help(newmenu *, const d_event &event, newmenu_item *items)
 	DXX_MENUITEM(VERB, TEXT, "Alt-F2/F3\t  SAVE/LOAD GAME", HELP_AF2_3)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F2/F3\t  Fast Save", HELP_ASF2_3)
 #define _DXX_HELP_MENU_PAUSE(VERB)	DXX_MENUITEM(VERB, TEXT, TXT_HELP_PAUSE, HELP_PAUSE)
-#define _DXX_HELP_MENU_AUDIO(VERB)	\
+
+#if DXX_USE_SDL_REDBOOK_AUDIO
+#define _DXX_HELP_MENU_AUDIO_REDBOOK(VERB)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F9\t  Eject Audio CD", HELP_ASF9)	\
+
+#else
+#define _DXX_HELP_MENU_AUDIO_REDBOOK(VERB)
+#endif
+
+#define _DXX_HELP_MENU_AUDIO(VERB)	\
+	_DXX_HELP_MENU_AUDIO_REDBOOK(VERB)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F10\t  Play/Pause " EXT_MUSIC_TEXT, HELP_ASF10)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F11/F12\t  Previous/Next Song", HELP_ASF11_12)
 #define _DXX_HELP_MENU_HINT_CMD_KEY(VERB, PREFIX)
@@ -1514,12 +1538,6 @@ window *game_setup(void)
 		Cursegp = imsegptridx(segment_first);
 		Curside = 0;
 	}
-	
-	if (vcsegptr(ConsoleObject->segnum)->segnum == segment_none)      //segment no longer exists
-		obj_relink(vmobjptr, vmsegptr, vmobjptridx(ConsoleObject), Cursegp);
-
-	if (!check_obj_seg(vcvertptr, ConsoleObject))
-		move_player_2_segment(Cursegp,Curside);
 #endif
 
 	Viewer = ConsoleObject;
@@ -1665,7 +1683,7 @@ array<unsigned, 2> Marker_viewer_num{{~0u, ~0u}};
 array<unsigned, 2> Coop_view_player{{UINT_MAX, UINT_MAX}};
 
 //returns ptr to escort robot, or NULL
-imobjptridx_t find_escort()
+imobjptridx_t find_escort(fvmobjptridx &vmobjptridx, const d_level_shared_robot_info_state::d_robot_info_array &Robot_info)
 {
 	range_for (const auto &&o, vmobjptridx)
 	{
@@ -1735,7 +1753,6 @@ window_event_result GameProcessFrame()
 	do_afterburner_stuff(Objects);
 	do_cloak_stuff();
 	do_invulnerable_stuff(player_info);
-	remove_obsolete_stuck_objects();
 #if defined(DXX_BUILD_DESCENT_II)
 	init_ai_frame(player_info.powerup_flags);
 	result = do_final_boss_frame();
@@ -1803,8 +1820,6 @@ window_event_result GameProcessFrame()
 		return result;					//skip everything else
 	}
 
-	if (Newdemo_state != ND_STATE_PLAYBACK)
-		do_exploding_wall_frame();
 	if ((Newdemo_state != ND_STATE_PLAYBACK) || (Newdemo_vcr_state != ND_STATE_PAUSED)) {
 		do_special_effects();
 		wall_frame_process();
@@ -1869,17 +1884,18 @@ window_event_result GameProcessFrame()
 
 	if (Do_appearance_effect) {
 		Do_appearance_effect = 0;
-		create_player_appearance_effect(*ConsoleObject);
+		create_player_appearance_effect(Vclip, *ConsoleObject);
 	}
 
 #if defined(DXX_BUILD_DESCENT_II)
 	omega_charge_frame(player_info);
 	slide_textures();
-	flicker_lights(Flickering_light_state, vmsegptridx);
+	auto &LevelSharedDestructibleLightState = LevelSharedSegmentState.DestructibleLights;
+	flicker_lights(LevelSharedDestructibleLightState, Flickering_light_state, vmsegptridx);
 
 	//if the player is taking damage, give up guided missile control
 	if (local_player_shields_ref != player_shields)
-		release_guided_missile(Player_num);
+		release_guided_missile(LevelUniqueObjectState, Player_num);
 #endif
 
 	// Check if we have to close in-game menus for multiplayer
@@ -1895,15 +1911,17 @@ window_event_result GameProcessFrame()
 #if defined(DXX_BUILD_DESCENT_II)
 void compute_slide_segs()
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	range_for (const auto &&segp, vmsegptr)
 	{
 		uint8_t slide_textures = 0;
 		for (int sidenum=0;sidenum<6;sidenum++) {
-			const auto &side = segp->sides[sidenum];
-			const auto &ti = TmapInfo[side.tmap_num];
+			const auto &sside = segp->shared_segment::sides[sidenum];
+			const auto &uside = segp->unique_segment::sides[sidenum];
+			const auto &ti = TmapInfo[uside.tmap_num];
 			if (!(ti.slide_u || ti.slide_v))
 				continue;
-			if (IS_CHILD(segp->children[sidenum]) && side.wall_num == wall_none)
+			if (IS_CHILD(segp->children[sidenum]) && sside.wall_num == wall_none)
 				/* If a wall exists, it could be visible at start or
 				 * become visible later, so always enable sliding for
 				 * walls.
@@ -1932,6 +1950,7 @@ static void update_uv(array<uvl, 4> &uvls, uvl &i, fix a)
 //	-----------------------------------------------------------------------------
 static void slide_textures(void)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	range_for (const auto &&segp, vmsegptr)
 	{
 		if (const auto slide_seg = segp->slide_textures)
@@ -1939,7 +1958,7 @@ static void slide_textures(void)
 			for (int sidenum=0;sidenum<6;sidenum++) {
 				if (slide_seg & (1 << sidenum))
 				{
-					auto &side = segp->sides[sidenum];
+					auto &side = segp->unique_segment::sides[sidenum];
 					const auto &ti = TmapInfo[side.tmap_num];
 					const auto tiu = ti.slide_u;
 					const auto tiv = ti.slide_v;
@@ -1963,8 +1982,11 @@ static void slide_textures(void)
 
 constexpr std::integral_constant<fix, INT32_MIN> flicker_timer_disabled{};
 
-static void flicker_lights(d_flickering_light_state &fls, fvmsegptridx &vmsegptridx)
+static void flicker_lights(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, d_flickering_light_state &fls, fvmsegptridx &vmsegptridx)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	range_for (auto &f, partial_range(fls.Flickering_lights, fls.Num_flickering_lights))
 	{
 		if (f.timer == flicker_timer_disabled)		//disabled
@@ -1972,13 +1994,13 @@ static void flicker_lights(d_flickering_light_state &fls, fvmsegptridx &vmsegptr
 		const auto &&segp = vmsegptridx(f.segnum);
 		const auto sidenum = f.sidenum;
 		{
-			auto &side = segp->sides[sidenum];
+			auto &side = segp->unique_segment::sides[sidenum];
 			if (!(TmapInfo[side.tmap_num].lighting || TmapInfo[side.tmap_num2 & 0x3fff].lighting))
 				continue;
 		}
 
 		//make sure this is actually a light
-		if (! (WALL_IS_DOORWAY(segp, sidenum) & WID_RENDER_FLAG))
+		if (! (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, sidenum) & WID_RENDER_FLAG))
 			continue;
 
 		if ((f.timer -= FrameTime) < 0)
@@ -1987,9 +2009,9 @@ static void flicker_lights(d_flickering_light_state &fls, fvmsegptridx &vmsegptr
 				f.timer += f.delay;
 			f.mask = ((f.mask & 0x80000000) ? 1 : 0) + (f.mask << 1);
 			if (f.mask & 1)
-				add_light(segp, sidenum);
+				add_light(LevelSharedDestructibleLightState, segp, sidenum);
 			else
-				subtract_light(segp, sidenum);
+				subtract_light(LevelSharedDestructibleLightState, segp, sidenum);
 		}
 	}
 }
@@ -2144,9 +2166,8 @@ int	Last_level_path_created = -1;
 //	------------------------------------------------------------------------------------------------------------------
 //	Create path for player from current segment to goal segment.
 //	Return true if path created, else return false.
-static int mark_player_path_to_segment(fvmobjptridx &vmobjptridx, fvmsegptridx &vmsegptridx, segnum_t segnum)
+static int mark_player_path_to_segment(const d_vclip_array &Vclip, fvmobjptridx &vmobjptridx, fvmsegptridx &vmsegptridx, segnum_t segnum)
 {
-	short		player_path_length=0;
 	int		player_hide_index=-1;
 
 	if (Last_level_path_created == Current_level_num) {
@@ -2156,9 +2177,10 @@ static int mark_player_path_to_segment(fvmobjptridx &vmobjptridx, fvmsegptridx &
 	Last_level_path_created = Current_level_num;
 
 	auto objp = vmobjptridx(ConsoleObject);
-	if (create_path_points(objp, objp->segnum, segnum, Point_segs_free_ptr, &player_path_length, 100, 0, 0, segment_none) == -1) {
+	const auto &&cr = create_path_points(objp, objp->segnum, segnum, Point_segs_free_ptr, 100, create_path_random_flag::nonrandom, create_path_safety_flag::unsafe, segment_none);
+	const unsigned player_path_length = cr.second;
+	if (cr.first == create_path_result::early)
 		return 0;
-	}
 
 	player_hide_index = Point_segs_free_ptr - Point_segs;
 	Point_segs_free_ptr += player_path_length;
@@ -2197,7 +2219,7 @@ int create_special_path(void)
 		for (int j=0; j<MAX_SIDES_PER_SEGMENT; j++)
 			if (segp->children[j] == segment_exit)
 			{
-				return mark_player_path_to_segment(vmobjptridx, vmsegptridx, segp);
+				return mark_player_path_to_segment(Vclip, vmobjptridx, vmsegptridx, segp);
 			}
 	}
 

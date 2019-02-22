@@ -114,7 +114,9 @@ int CreateNewMine()
 		texpage_goto_first();
 		create_new_mine();
 		LargeView.ev_matrix = vmd_identity_matrix;	//FrontView.ev_matrix;
-		set_view_target_from_segment(Cursegp);
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
+		set_view_target_from_segment(vcvertptr, Cursegp);
 		Update_flags = UF_WORLD_CHANGED;
 		SetPlayerFromCurseg();
 		SetPlayerPosition();		//say default is permanant position
@@ -178,9 +180,9 @@ static int med_save_situation(char * filename)
 {
 	auto SaveFile = PHYSFSX_openWriteBuffered(filename);
 	if (!SaveFile)	{
-		char  ErrorMessage[200];
+		char  ErrorMessage[512];
 
-		snprintf(ErrorMessage, sizeof(ErrorMessage), "ERROR: Unable to open %s\n", filename);
+		snprintf(ErrorMessage, sizeof(ErrorMessage), "ERROR: Unable to open %.480s", filename);
 		ui_messagebox( -2, -2, 1, ErrorMessage, "Ok" );
 		return 1;
 	}

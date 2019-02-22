@@ -26,11 +26,14 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "maths.h"
 #include "vecmat.h"
 #include "inferno.h"
+#include "lighting.h"
+#include "fuelcen.h"
 #include "segment.h"
 #include "switch.h"
 #include "object.h"
 #include "player.h"
 #include "bm.h"
+#include "robot.h"
 #include "3d.h"
 #include "game.h"
 #include "textures.h"
@@ -38,10 +41,12 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "wall.h"
 
 namespace dcx {
-unsigned Num_segments;
+d_level_shared_boss_state LevelSharedBossState;
+d_level_shared_vertex_state LevelSharedVertexState;
+d_level_unique_fuelcenter_state LevelUniqueFuelcenterState;
+d_level_unique_light_state LevelUniqueLightState;
+d_level_unique_segment_state LevelUniqueSegmentState;
 // Global array of vertices, common to one mine.
-valptridx<vertex>::array_managed_type Vertices;
-valptridx<active_door>::array_managed_type ActiveDoors;
 valptridx<player>::array_managed_type Players;
 valptridx<segment>::array_managed_type Segments;
 }
@@ -61,7 +66,6 @@ int d_tick_step = 0;  // true once every 33.33ms
 
 //	Translate table to get opposite side of a face on a segment.
 
-unsigned Num_vertices;
 const array<uint8_t, MAX_SIDES_PER_SEGMENT> Side_opposite{{
 	WRIGHT, WBOTTOM, WLEFT, WTOP, WFRONT, WBACK
 }};
@@ -93,14 +97,15 @@ valptridx<managed_type>::array_managed_type::array_managed_type()
 #endif
 
 namespace dsx {
-#if defined(DXX_BUILD_DESCENT_II)
-valptridx<cloaking_wall>::array_managed_type CloakingWalls;
-valptridx<dl_index>::array_managed_type Dl_indices;
-#endif
-d_level_object_state ObjectState;
+d_level_shared_segment_state LevelSharedSegmentState;
+d_level_unique_object_state LevelUniqueObjectState;
+d_level_shared_polygon_model_state LevelSharedPolygonModelState;
+d_level_shared_robotcenter_state LevelSharedRobotcenterState;
+d_level_shared_robot_info_state LevelSharedRobotInfoState;
+d_level_shared_robot_joint_state LevelSharedRobotJointState;
 valptridx<object>::array_managed_type Objects;
-valptridx<trigger>::array_managed_type Triggers;
-valptridx<wall>::array_managed_type Walls;
+d_level_unique_wall_subsystem_state LevelUniqueWallSubsystemState;
+d_level_unique_tmap_info_state LevelUniqueTmapInfoState;
 }
 
 /*

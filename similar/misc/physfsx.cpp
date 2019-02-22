@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -104,7 +104,8 @@ bool PHYSFSX_init(int argc, char *argv[])
 #define base_dir PHYSFS_getBaseDir()
 #endif
 	
-	PHYSFS_init(argv[0]);
+	if (!PHYSFS_init(argv[0]))
+		Error("Failed to init PhysFS: %s", PHYSFS_getLastError());
 	PHYSFS_permitSymbolicLinks(1);
 	
 #ifdef macintosh
@@ -213,11 +214,20 @@ bool PHYSFSX_init(int argc, char *argv[])
 		con_printf(CON_DEBUG, "PHYSFS: append argument hog directory \"%s\" to search path", p);
 		PHYSFS_addToSearchPath(p, 1);
 	}
-#ifdef SHAREPATH
-	else if (!CGameArg.SysNoHogDir)
+#if DXX_USE_SHAREPATH
+	else if (!GameArg.SysNoHogDir)
 	{
-		con_puts(CON_DEBUG, "PHYSFS: append sharepath directory \"" SHAREPATH "\" to search path");
-		PHYSFS_addToSearchPath(SHAREPATH, 1);
+		con_puts(CON_DEBUG, "PHYSFS: append sharepath directory \"" DXX_SHAREPATH "\" to search path");
+		PHYSFS_addToSearchPath(DXX_SHAREPATH, 1);
+	}
+	else
+	{
+		con_puts(CON_DEBUG, "PHYSFS: skipping built-in sharepath \"" DXX_SHAREPATH "\"");
+	}
+#else
+	else
+	{
+		con_puts(CON_DEBUG, "PHYSFS: no built-in sharepath");
 	}
 #endif
 	
@@ -226,20 +236,20 @@ bool PHYSFSX_init(int argc, char *argv[])
 	// For Macintosh, add the 'Resources' directory in the .app bundle to the searchpaths
 #if defined(__APPLE__) && defined(__MACH__)
 	{
-		ProcessSerialNumber psn = { 0, kCurrentProcess };
-		FSRef fsref;
-		OSStatus err;
-		
-		err = GetProcessBundleLocation(&psn, &fsref);
-		if (err == noErr)
-			err = FSRefMakePath(&fsref, reinterpret_cast<uint8_t *>(fullPath), PATH_MAX);
-		
-		if (err == noErr)
+		CFBundleRef mainBundle = CFBundleGetMainBundle();
+		if (mainBundle)
 		{
-			strncat(fullPath, "/Contents/Resources/", PATH_MAX + 4 - strlen(fullPath));
-			fullPath[PATH_MAX + 4] = '\0';
-			con_printf(CON_DEBUG, "PHYSFS: append resources directory \"%s\" to search path", fullPath);
-			PHYSFS_addToSearchPath(fullPath, 1);
+			CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL(mainBundle);
+			if (resourcesURL)
+			{
+				if (CFURLGetFileSystemRepresentation(resourcesURL, TRUE, reinterpret_cast<uint8_t *>(fullPath), sizeof(fullPath)))
+				{
+					con_printf(CON_DEBUG, "PHYSFS: append resources directory \"%s\" to search path", fullPath);
+					PHYSFS_addToSearchPath(fullPath, 1);
+				}
+			
+				CFRelease(resourcesURL);
+			}
 		}
 	}
 #elif defined(macintosh)

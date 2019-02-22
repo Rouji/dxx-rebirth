@@ -109,7 +109,7 @@ constexpr array<char[12], ESCORT_GOAL_MARKER9> Escort_goal_text = {{
 // -- too much work -- 	"KAMIKAZE  "
 }};
 
-static int Max_escort_length = 200;
+constexpr std::integral_constant<unsigned, 200> Max_escort_length{};
 stolen_items_t Stolen_items;
 int	Stolen_item_index;
 fix64	Escort_last_path_created = 0;
@@ -131,7 +131,8 @@ void init_buddy_for_level(void)
 	Escort_special_goal = ESCORT_GOAL_UNSPECIFIED;
 	Escort_goal_index = object_none;
 	Buddy_messages_suppressed = 0;
-	Buddy_objnum = find_escort();
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+	Buddy_objnum = find_escort(vmobjptridx, Robot_info);
 	Buddy_sorry_time = -F1_0;
 
 	Looking_for_marker = -1;
@@ -141,9 +142,9 @@ void init_buddy_for_level(void)
 //	-----------------------------------------------------------------------------
 //	See if segment from curseg through sidenum is reachable.
 //	Return true if it is reachable, else return false.
-static int segment_is_reachable(const vmobjptr_t robot, const vcsegptr_t segp, int sidenum, const player_flags powerup_flags)
+static int segment_is_reachable(const vmobjptr_t robot, const shared_segment &segp, int sidenum, const player_flags powerup_flags)
 {
-	auto wall_num = segp->sides[sidenum].wall_num;
+	const auto wall_num = segp.sides[sidenum].wall_num;
 
 	//	If no wall, then it is reachable
 	if (wall_num == wall_none)
@@ -234,10 +235,12 @@ static int ok_for_buddy_to_talk(void)
 	if (Buddy_allowed_to_talk)
 		return Buddy_allowed_to_talk;
 
-	const segment *const segp = vcsegptr(buddy->segnum);
+	const shared_segment &segp = vcsegptr(buddy->segnum);
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	for (int i=0; i<MAX_SIDES_PER_SEGMENT; i++) {
-		auto	wall_num = segp->sides[i].wall_num;
+		const auto wall_num = segp.sides[i].wall_num;
 
 		if (wall_num != wall_none) {
 			auto &w = *vcwallptr(wall_num);
@@ -246,8 +249,11 @@ static int ok_for_buddy_to_talk(void)
 		}
 
 		//	Check one level deeper.
-		if (IS_CHILD(segp->children[i])) {
-			range_for (const auto &j, vcsegptr(segp->children[i])->sides)
+		const auto child = segp.children[i];
+		if (IS_CHILD(child))
+		{
+			const shared_segment &cseg = *vcsegptr(child);
+			range_for (const auto &j, cseg.sides)
 			{
 				auto wall2 = j.wall_num;
 				if (wall2 != wall_none) {
@@ -458,7 +464,8 @@ void set_escort_special_goal(int special_key)
 	if (!Buddy_allowed_to_talk) {
 		ok_for_buddy_to_talk();
 		if (!Buddy_allowed_to_talk) {
-			auto o = find_escort();
+			auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+			const auto &&o = find_escort(vmobjptridx, Robot_info);
 			if (o == object_none)
 				HUD_init_message_literal(HM_DEFAULT, "No Guide-Bot in mine.");
 			else
@@ -521,6 +528,7 @@ void set_escort_special_goal(int special_key)
 //	Return id of boss.
 static int get_boss_id(void)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	range_for (const auto &&objp, vcobjptr)
 	{
 		if (objp->type == OBJ_ROBOT)
@@ -536,8 +544,9 @@ static int get_boss_id(void)
 //	-----------------------------------------------------------------------------
 //	Return object index if object of objtype, objid exists in mine, else return -1
 //	"special" is used to find objects spewed by player which is hacked into flags field of powerup.
-static objnum_t exists_in_mine_2(const vcsegptr_t segp, const int objtype, const int objid, const int special)
+static objnum_t exists_in_mine_2(const unique_segment &segp, const int objtype, const int objid, const int special)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	range_for (const auto curobjp, objects_in(segp, vcobjptridx, vcsegptr))
 	{
 		const auto &objnum = curobjp;
@@ -580,8 +589,8 @@ static segnum_t exists_fuelcen_in_mine(const vcsegidx_t start_seg, const player_
 	}
 	{
 		const auto &rh = vcsegptr;
-		const auto a = [](const vcsegptr_t &s) {
-			return s->special == SEGMENT_IS_FUELCEN;
+		const auto a = [](const shared_segment &s) {
+			return s.special == SEGMENT_IS_FUELCEN;
 		};
 		if (std::find_if(rh.begin(), rh.end(), a) != rh.end())
 			return segment_exit;
@@ -725,7 +734,7 @@ static void escort_goal_unreachable(escort_goal_t goal)
 
 static void escort_go_to_goal(const vmobjptridx_t objp, ai_static *aip, segnum_t goal_seg)
 {
-	create_path_to_segment(objp, goal_seg, Max_escort_length, 1);	//	MK!: Last parm (safety_flag) used to be 1!!
+	create_path_to_segment(objp, goal_seg, Max_escort_length, create_path_safety_flag::safe);	//	MK!: Last parm (safety_flag) used to be 1!!
 	if (aip->path_length > 3)
 		aip->path_length = polish_path(objp, &Point_segs[aip->hide_index], aip->path_length);
 	if ((aip->path_length > 0) && (Point_segs[aip->hide_index + aip->path_length - 1].segnum != goal_seg)) {
@@ -735,7 +744,7 @@ static void escort_go_to_goal(const vmobjptridx_t objp, ai_static *aip, segnum_t
 		Escort_goal_object = ESCORT_GOAL_SCRAM;
 		dist_to_player = find_connected_distance(objp->pos, vmsegptridx(objp->segnum), Believed_player_pos, vmsegptridx(Believed_player_seg), 100, WID_FLY_FLAG);
 		if (dist_to_player > MIN_ESCORT_DISTANCE)
-			create_path_to_player(objp, Max_escort_length, 1);	//	MK!: Last parm used to be 1!
+			create_path_to_player(objp, Max_escort_length, create_path_safety_flag::safe);	//	MK!: Last parm used to be 1!
 		else {
 			create_n_segment_path(objp, 8 + d_rand() * 8, segment_none);
 			aip->path_length = polish_path(objp, &Point_segs[aip->hide_index], aip->path_length);
@@ -862,6 +871,7 @@ static void escort_create_path_to_goal(const vmobjptridx_t objp, const player_in
 //	Returns goal object.
 static escort_goal_t escort_set_goal_object(const player_flags pl_flags)
 {
+	auto &Boss_teleport_segs = LevelSharedBossState.Teleport_segs;
 	if (Escort_special_goal != ESCORT_GOAL_UNSPECIFIED)
 		return ESCORT_GOAL_UNSPECIFIED;
 	if (!(pl_flags & PLAYER_FLAGS_BLUE_KEY) && exists_in_mine(ConsoleObject->segnum, OBJ_POWERUP, POW_KEY_BLUE, -1, pl_flags) != object_none)
@@ -985,6 +995,7 @@ static void do_buddy_dude_stuff(void)
 
 	if (Buddy_last_missile_time + F1_0*2 < GameTime64) {
 		//	See if a robot potentially in view cone
+		auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 		auto &&rh = make_range(vmobjptridx);
 		range_for (const auto &&objp, rh)
 		{
@@ -1076,7 +1087,7 @@ void do_escort_frame(const vmobjptridx_t objp, const object &plrobj, fix dist_to
 	}
 
 	if ((Escort_special_goal != ESCORT_GOAL_SCRAM) && time_to_visit_player(objp, ailp, aip)) {
-		int	max_len;
+		unsigned max_len;
 
 		Buddy_last_player_path_created = GameTime64;
 		ailp->mode = ai_mode::AIM_GOTO_PLAYER;
@@ -1090,7 +1101,7 @@ void do_escort_frame(const vmobjptridx_t objp, const object &plrobj, fix dist_to
 		max_len = Max_escort_length;
 		if (!Buddy_allowed_to_talk)
 			max_len = 3;
-		create_path_to_player(objp, max_len, 1);	//	MK!: Last parm used to be 1!
+		create_path_to_player(objp, max_len, create_path_safety_flag::safe);	//	MK!: Last parm used to be 1!
 		aip->path_length = polish_path(objp, &Point_segs[aip->hide_index], aip->path_length);
 		ailp->mode = ai_mode::AIM_GOTO_PLAYER;
 	}	else if (GameTime64 - Buddy_last_seen_player > MAX_ESCORT_TIME_AWAY) {
@@ -1143,7 +1154,7 @@ void do_snipe_frame(const vmobjptridx_t objp, fix dist_to_player, int player_vis
 
 			connected_distance = find_connected_distance(objp->pos, vmsegptridx(objp->segnum), Believed_player_pos, vmsegptridx(Believed_player_seg), 30, WID_FLY_FLAG);
 			if (connected_distance < F1_0*500) {
-				create_path_to_player(objp, 30, 1);
+				create_path_to_player(objp, 30, create_path_safety_flag::safe);
 				ailp->mode = ai_mode::AIM_SNIPE_ATTACK;
 				ailp->next_action_time = SNIPE_ATTACK_TIME;	//	have up to 10 seconds to find player.
 			}
@@ -1232,6 +1243,8 @@ void recreate_thief(const uint8_t thief_id)
 {
 	const auto segnum = choose_thief_recreation_segment(ConsoleObject->segnum);
 	const auto &&segp = vmsegptridx(segnum);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	const auto &&center_point = compute_segment_center(vcvertptr, segp);
 
 	const auto &&new_obj = create_morph_robot(segp, center_point, thief_id);
@@ -1250,6 +1263,7 @@ constexpr array<fix, NDL> Thief_wait_times = {{
 //	-------------------------------------------------------------------------------------------------
 void do_thief_frame(const vmobjptridx_t objp, fix dist_to_player, int player_visibility, const vms_vector &vec_to_player)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	ai_local		*ailp = &objp->ctype.ai_info.ail;
 	fix			connected_distance;
 
@@ -1269,7 +1283,7 @@ void do_thief_frame(const vmobjptridx_t objp, fix dist_to_player, int player_vis
 		case ai_mode::AIM_THIEF_WAIT:
 			if (ailp->player_awareness_type >= player_awareness_type_t::PA_PLAYER_COLLISION) {
 				ailp->player_awareness_type = player_awareness_type_t::PA_NONE;
-				create_path_to_player(objp, 30, 1);
+				create_path_to_player(objp, 30, create_path_safety_flag::safe);
 				ailp->mode = ai_mode::AIM_THIEF_ATTACK;
 				ailp->next_action_time = THIEF_ATTACK_TIME/2;
 				return;
@@ -1286,7 +1300,7 @@ void do_thief_frame(const vmobjptridx_t objp, fix dist_to_player, int player_vis
 
 			connected_distance = find_connected_distance(objp->pos, vmsegptridx(objp->segnum), Believed_player_pos, vmsegptridx(Believed_player_seg), 30, WID_FLY_FLAG);
 			if (connected_distance < F1_0*500) {
-				create_path_to_player(objp, 30, 1);
+				create_path_to_player(objp, 30, create_path_safety_flag::safe);
 				ailp->mode = ai_mode::AIM_THIEF_ATTACK;
 				ailp->next_action_time = THIEF_ATTACK_TIME;	//	have up to 10 seconds to find player.
 			}
@@ -1338,7 +1352,7 @@ void do_thief_frame(const vmobjptridx_t objp, fix dist_to_player, int player_vis
 			} else if (ailp->next_action_time < 0) {
 				//	This forces him to create a new path every second.
 				ailp->next_action_time = F1_0;
-				create_path_to_player(objp, 100, 0);
+				create_path_to_player(objp, 100, create_path_safety_flag::unsafe);
 				ailp->mode = ai_mode::AIM_THIEF_ATTACK;
 			} else {
 				if (player_visibility && (dist_to_player < F1_0*100)) {
@@ -1655,7 +1669,7 @@ void drop_stolen_items(const vcobjptr_t objp)
 	{
 		if (i != 255)
 		{
-			drop_powerup(exchange(i, 255), 1, objp->mtype.phys_info.velocity, objp->pos, segp, true);
+			drop_powerup(Vclip, exchange(i, 255), 1, objp->mtype.phys_info.velocity, objp->pos, segp, true);
 		}
 	}
 
@@ -1738,7 +1752,7 @@ window_event_result escort_menu::event_handler(window *, const d_event &event, e
 void do_escort_menu(void)
 {
 	int	next_goal;
-	char	goal_str[32];
+	char	goal_str[12];
 	const char *goal_txt;
 	const char *tstr;
 	escort_menu *menu;
@@ -1748,7 +1762,8 @@ void do_escort_menu(void)
 		return;
 	}
 
-	auto buddy = find_escort();
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+	const auto &&buddy = find_escort(vmobjptridx, Robot_info);
 	if (buddy == object_none)
 	{
 		HUD_init_message_literal(HM_DEFAULT, "No Guide-Bot present in mine!");

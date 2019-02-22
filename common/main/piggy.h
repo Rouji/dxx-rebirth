@@ -78,7 +78,7 @@ struct bitmap_index
 
 struct BitmapFile
 {
-	char    name[15];
+	array<char, 13> name;
 };
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -108,25 +108,22 @@ void piggy_load_level_data();
 
 #if defined(DXX_BUILD_DESCENT_I)
 constexpr std::integral_constant<unsigned, 1800> MAX_BITMAP_FILES{};
-#define MAX_SOUND_FILES     MAX_SOUNDS
 #define PIGGY_PC_SHAREWARE 2
 #elif defined(DXX_BUILD_DESCENT_II)
 // Upped for CD Enhanced
 constexpr std::integral_constant<unsigned, 2620> MAX_BITMAP_FILES{};
-#define MAX_SOUND_FILES     MAX_SOUNDS
 #endif
+#define MAX_SOUND_FILES     MAX_SOUNDS
 
 
 #ifdef dsx
 namespace dsx {
 extern void piggy_bitmap_page_in( bitmap_index bmp );
 void piggy_bitmap_page_out_all();
-}
-#endif
 
-namespace dsx {
+using GameBitmaps_array = array<grs_bitmap, MAX_BITMAP_FILES>;
 extern array<digi_sound, MAX_SOUND_FILES> GameSounds;
-extern array<grs_bitmap, MAX_BITMAP_FILES> GameBitmaps;
+extern GameBitmaps_array GameBitmaps;
 #  define  PIGGY_PAGE_IN(bmp) _piggy_page_in(bmp)
 static inline void _piggy_page_in(bitmap_index bmp) {
 	if (GameBitmaps[bmp.index].get_flag_mask(BM_FLAG_PAGED_OUT))
@@ -135,6 +132,7 @@ static inline void _piggy_page_in(bitmap_index bmp) {
     }
 }
 }
+#endif
 
 #if defined(DXX_BUILD_DESCENT_I)
 void piggy_read_sounds(int pc_shareware);
@@ -167,7 +165,7 @@ extern void remove_char( char * s, char c );	// in piggy.c
 #define REMOVE_COMMENTS(s)	remove_char((s),';')
 #define REMOVE_DOTS(s)  	remove_char((s),'.')
 
-extern int Num_bitmap_files;
+extern unsigned Num_bitmap_files;
 extern int Num_sound_files;
 extern ubyte bogus_bitmap_initialized;
 namespace dsx {

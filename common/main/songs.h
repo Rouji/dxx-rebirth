@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -13,6 +13,7 @@
 #ifndef _SONGS_H
 #define _SONGS_H
 
+#include <SDL_version.h>
 #ifdef __cplusplus
 #include "dxxsconf.h"
 
@@ -41,6 +42,9 @@ struct bim_song_info
 #define songs_play_file(filename,repeat,hook_finished_track)	songs_play_file(filename,repeat)
 #else
 #define songs_play_file(filename,repeat,hook_finished_track)	songs_play_file()
+#endif
+#if SDL_MAJOR_VERSION == 2
+#define songs_play_song(songnum,repeat)	songs_play_song(songnum)
 #endif
 #endif
 int songs_play_file(const char *filename, int repeat, void (*hook_finished_track)());

@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -12,6 +12,12 @@
 #ifdef __cplusplus
 #include <memory>
 
+enum class MVE_StepStatus
+{
+	Continue = 0,
+	EndOfFile = 1,
+};
+
 struct MVESTREAM;
 
 struct MVE_videoSpec {
@@ -22,7 +28,7 @@ struct MVE_videoSpec {
 	int truecolor;
 };
 
-int  MVE_rmStepMovie(MVESTREAM *mve);
+MVE_StepStatus MVE_rmStepMovie(MVESTREAM &mve);
 void MVE_rmHoldMovie();
 void MVE_rmEndMovie(std::unique_ptr<MVESTREAM> mve);
 

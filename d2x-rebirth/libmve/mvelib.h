@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -113,7 +113,7 @@ void mve_reset(MVESTREAM *movie);
 /*
  * set segment type handler
  */
-void mve_set_handler(MVESTREAM *movie, unsigned char major, MVESEGMENTHANDLER handler);
+void mve_set_handler(MVESTREAM &movie, unsigned char major, MVESEGMENTHANDLER handler);
 
 /*
  * set segment handler context
@@ -123,6 +123,6 @@ void mve_set_handler_context(MVESTREAM *movie, void *context);
 /*
  * play next chunk
  */
-int mve_play_next_chunk(MVESTREAM *movie);
+int mve_play_next_chunk(MVESTREAM &movie);
 
 #endif

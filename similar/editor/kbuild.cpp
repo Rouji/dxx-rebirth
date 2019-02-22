@@ -102,7 +102,11 @@ int CreateSloppyAdjacentJoint()
 	int		adj_side;
 	imsegptridx_t adj_sp = segment_none;
 
-	save_level("SLOPPY.LVL");
+	save_level(
+#if defined(DXX_BUILD_DESCENT_II)
+		LevelSharedSegmentState.DestructibleLights,
+#endif
+		"SLOPPY.LVL");
 
 	if (med_find_closest_threshold_segment_side(Cursegp, Curside, adj_sp, &adj_side, 20*F1_0)) {
 		if (Cursegp->children[Curside] != adj_sp) {
@@ -166,6 +170,7 @@ int CreateAdjacentJointsSegment()
 {
 	int		adj_side;
 
+	auto &Vertex_active = LevelSharedVertexState.get_vertex_active();
 	med_combine_duplicate_vertices(Vertex_active);
 
 	for (int s=0; s<MAX_SIDES_PER_SEGMENT; s++) {
@@ -191,6 +196,7 @@ int CreateAdjacentJointsAll()
 {
 	int		adj_side;
 
+	auto &Vertex_active = LevelSharedVertexState.get_vertex_active();
 	med_combine_duplicate_vertices(Vertex_active);
 
 	range_for (const auto &&segp, vmsegptridx)

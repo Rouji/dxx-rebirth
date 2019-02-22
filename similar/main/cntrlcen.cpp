@@ -49,6 +49,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "endlevel.h"
 #include "state.h"
 #include "args.h"
+#include "wall.h"
 
 #include "compiler-range_for.h"
 #include "partial_range.h"
@@ -106,13 +107,13 @@ void calc_controlcen_gun_point(object &obj)
 //	Look at control center guns, find best one to fire at *objp.
 //	Return best gun number (one whose direction dotted with vector to player is largest).
 //	If best gun has negative dot, return -1, meaning no gun is good.
-static int calc_best_gun(int num_guns, const vcobjptr_t objreactor, const vms_vector &objpos)
+static int calc_best_gun(const unsigned num_guns, const object &objreactor, const vms_vector &objpos)
 {
 	int	i;
 	fix	best_dot;
 	int	best_gun;
-	auto &gun_pos = objreactor->ctype.reactor_info.gun_pos;
-	auto &gun_dir = objreactor->ctype.reactor_info.gun_dir;
+	auto &gun_pos = objreactor.ctype.reactor_info.gun_pos;
+	auto &gun_dir = objreactor.ctype.reactor_info.gun_dir;
 
 	best_dot = -F1_0*2;
 	best_gun = -1;
@@ -277,9 +278,11 @@ void do_controlcen_destroyed_stuff(const imobjptridx_t objp)
 		return; // Don't allow resetting if control center and boss on same level
 #endif
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vmwallptr = Walls.vmptr;
 	// Must toggle walls whether it is a boss or control center.
 	for (i=0;i<ControlCenterTriggers.num_links;i++)
-		wall_toggle(vmsegptridx(ControlCenterTriggers.seg[i]), ControlCenterTriggers.side[i]);
+		wall_toggle(vmwallptr, vmsegptridx(ControlCenterTriggers.seg[i]), ControlCenterTriggers.side[i]);
 
 	// And start the countdown stuff.
 	Control_center_destroyed = 1;
@@ -450,6 +453,7 @@ void init_controlcen_for_level(void)
 {
 	imobjptr_t cntrlcen_objnum = nullptr, boss_objnum = nullptr;
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	range_for (const auto &&objp, vmobjptridx)
 	{
 		if (objp->type == OBJ_CNTRLCEN)
@@ -476,10 +480,10 @@ void init_controlcen_for_level(void)
 	{
 		if (cntrlcen_objnum != nullptr)
 		{
-			const vmobjptr_t objp = cntrlcen_objnum;
-			objp->type = OBJ_GHOST;
-			objp->control_type = CT_NONE;
-			objp->render_type = RT_NONE;
+			auto &objp = *cntrlcen_objnum;
+			objp.type = OBJ_GHOST;
+			objp.control_type = CT_NONE;
+			objp.render_type = RT_NONE;
 			Control_center_present = 0;
 		}
 	}

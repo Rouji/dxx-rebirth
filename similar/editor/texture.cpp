@@ -39,8 +39,8 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include "compiler-range_for.h"
 
-static uvl compute_uv_side_center(const vcsegptr_t segp, sidenum_fast_t sidenum);
-static void rotate_uv_points_on_side(const vmsegptr_t segp, sidenum_fast_t sidenum, const array<fix, 4> &rotmat, const uvl &uvcenter);
+static uvl compute_uv_side_center(const unique_segment &segp, sidenum_fast_t sidenum);
+static void rotate_uv_points_on_side(unique_segment &segp, sidenum_fast_t sidenum, const array<fix, 4> &rotmat, const uvl &uvcenter);
 
 //	-----------------------------------------------------------
 int	TexFlipX()
@@ -84,17 +84,19 @@ static int DoTexSlideLeft(int value)
 	uvl	duvl03;
 	fix	dist;
 	auto &vp = Side_to_verts[Curside];
-	const auto sidep = &Cursegp->sides[Curside];
+	auto &uvls = Cursegp->unique_segment::sides[Curside].uvls;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	dist = vm_vec_dist(vcvertptr(Cursegp->verts[vp[3]]), vcvertptr(Cursegp->verts[vp[0]]));
 	dist *= value;
 	if (dist < F1_0/(64*value))
 		dist = F1_0/(64*value);
 
-	duvl03.u = fixdiv(sidep->uvls[3].u - sidep->uvls[0].u,dist);
-	duvl03.v = fixdiv(sidep->uvls[3].v - sidep->uvls[0].v,dist);
+	duvl03.u = fixdiv(uvls[3].u - uvls[0].u,dist);
+	duvl03.v = fixdiv(uvls[3].v - uvls[0].v,dist);
 
-	range_for (auto &v, sidep->uvls)
+	range_for (auto &v, uvls)
 	{
 		v.u -= duvl03.u;
 		v.v -= duvl03.v;
@@ -118,22 +120,23 @@ int TexSlideLeftBig()
 //	-----------------------------------------------------------
 static int DoTexSlideUp(int value)
 {
-	side	*sidep;
 	uvl	duvl03;
 	fix	dist;
 	auto &vp = Side_to_verts[Curside];
-	sidep = &Cursegp->sides[Curside];
+	auto &uvls = Cursegp->unique_segment::sides[Curside].uvls;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	dist = vm_vec_dist(vcvertptr(Cursegp->verts[vp[1]]), vcvertptr(Cursegp->verts[vp[0]]));
 	dist *= value;
 
 	if (dist < F1_0/(64*value))
 		dist = F1_0/(64*value);
 
-	duvl03.u = fixdiv(sidep->uvls[1].u - sidep->uvls[0].u,dist);
-	duvl03.v = fixdiv(sidep->uvls[1].v - sidep->uvls[0].v,dist);
+	duvl03.u = fixdiv(uvls[1].u - uvls[0].u,dist);
+	duvl03.v = fixdiv(uvls[1].v - uvls[0].v,dist);
 
-	range_for (auto &v, sidep->uvls)
+	range_for (auto &v, uvls)
 	{
 		v.u -= duvl03.u;
 		v.v -= duvl03.v;
@@ -158,21 +161,22 @@ int TexSlideUpBig()
 //	-----------------------------------------------------------
 static int DoTexSlideDown(int value)
 {
-	side	*sidep;
 	uvl	duvl03;
 	fix	dist;
 	auto &vp = Side_to_verts[Curside];
-	sidep = &Cursegp->sides[Curside];
+	auto &uvls = Cursegp->unique_segment::sides[Curside].uvls;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	dist = vm_vec_dist(vcvertptr(Cursegp->verts[vp[1]]), vcvertptr(Cursegp->verts[vp[0]]));
 	dist *= value;
 	if (dist < F1_0/(64*value))
 		dist = F1_0/(64*value);
 
-	duvl03.u = fixdiv(sidep->uvls[1].u - sidep->uvls[0].u,dist);
-	duvl03.v = fixdiv(sidep->uvls[1].v - sidep->uvls[0].v,dist);
+	duvl03.u = fixdiv(uvls[1].u - uvls[0].u,dist);
+	duvl03.v = fixdiv(uvls[1].v - uvls[0].v,dist);
 
-	range_for (auto &v, sidep->uvls)
+	range_for (auto &v, uvls)
 	{
 		v.u += duvl03.u;
 		v.v += duvl03.v;
@@ -195,11 +199,10 @@ int TexSlideDownBig()
 
 //	-----------------------------------------------------------
 //	Compute the center of the side in u,v coordinates.
-static uvl compute_uv_side_center(const vcsegptr_t segp, sidenum_fast_t sidenum)
+static uvl compute_uv_side_center(const unique_segment &segp, const sidenum_fast_t sidenum)
 {
 	uvl uvcenter{};
-	auto sidep = &segp->sides[sidenum];
-	range_for (auto &v, sidep->uvls)
+	range_for (auto &v, segp.sides[sidenum].uvls)
 	{
 		uvcenter.u += v.u;
 		uvcenter.v += v.v;
@@ -224,10 +227,9 @@ static uvl rotate_uv_point(const array<fix, 4> &rotmat, const uvl &uv, const uvl
 
 //	-----------------------------------------------------------
 //	Compute the center of the side in u,v coordinates.
-static void rotate_uv_points_on_side(const vmsegptr_t segp, sidenum_fast_t sidenum, const array<fix, 4> &rotmat, const uvl &uvcenter)
+static void rotate_uv_points_on_side(unique_segment &segp, const sidenum_fast_t sidenum, const array<fix, 4> &rotmat, const uvl &uvcenter)
 {
-	side	*sidep = &segp->sides[sidenum];
-	range_for (auto &v, sidep->uvls)
+	range_for (auto &v, segp.sides[sidenum].uvls)
 	{
 		v = rotate_uv_point(rotmat, v, uvcenter);
 	}
@@ -278,21 +280,22 @@ int TexRotateLeftBig()
 //	-----------------------------------------------------------
 static int DoTexSlideRight(int value)
 {
-	side	*sidep;
 	uvl	duvl03;
 	fix	dist;
 	auto &vp = Side_to_verts[Curside];
-	sidep = &Cursegp->sides[Curside];
+	auto &uvls = Cursegp->unique_segment::sides[Curside].uvls;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	dist = vm_vec_dist(vcvertptr(Cursegp->verts[vp[3]]), vcvertptr(Cursegp->verts[vp[0]]));
 	dist *= value;
 	if (dist < F1_0/(64*value))
 		dist = F1_0/(64*value);
 
-	duvl03.u = fixdiv(sidep->uvls[3].u - sidep->uvls[0].u,dist);
-	duvl03.v = fixdiv(sidep->uvls[3].v - sidep->uvls[0].v,dist);
+	duvl03.u = fixdiv(uvls[3].u - uvls[0].u,dist);
+	duvl03.v = fixdiv(uvls[3].v - uvls[0].v,dist);
 
-	range_for (auto &v, sidep->uvls)
+	range_for (auto &v, uvls)
 	{
 		v.u += duvl03.u;
 		v.v += duvl03.v;

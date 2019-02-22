@@ -65,15 +65,16 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 // Initializes all the switches.
 void trigger_init()
 {
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
 	Triggers.set_count(0);
 }
 #endif
 
-template <typename T1, typename T2>
-static inline void trigger_wall_op(const trigger &t, T1 &segment_factory, const T2 &op)
+template <typename SF, typename O, typename... Oa>
+static inline void trigger_wall_op(const trigger &t, SF &segment_factory, const O &op, Oa &&... oargs)
 {
 	for (unsigned i = 0, num_links = t.num_links; i != num_links; ++i)
-		op(segment_factory(t.seg[i]), t.side[i]);
+		op(std::forward<Oa>(oargs)..., segment_factory(t.seg[i]), t.side[i]);
 }
 
 //-----------------------------------------------------------------
@@ -82,7 +83,9 @@ static inline void trigger_wall_op(const trigger &t, T1 &segment_factory, const 
 // Opens doors, Blasts blast walls, turns off illusions.
 static void do_link(const trigger &t)
 {
-	trigger_wall_op(t, vmsegptridx, wall_toggle);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vmwallptr = Walls.vmptr;
+	trigger_wall_op(t, vmsegptridx, wall_toggle, vmwallptr);
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -90,19 +93,20 @@ namespace dsx {
 //close a door
 static void do_close_door(const trigger &t)
 {
-	trigger_wall_op(t, vmsegptridx, wall_close_door);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	trigger_wall_op(t, vmsegptridx, wall_close_door, Walls);
 }
 
 //turns lighting on.  returns true if lights were actually turned on. (they
 //would not be if they had previously been shot out).
-static int do_light_on(const trigger &t)
+static int do_light_on(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, const d_level_unique_tmap_info_state::TmapInfo_array &TmapInfo, d_flickering_light_state &Flickering_light_state, const trigger &t)
 {
 	int ret=0;
-	const auto op = [&ret](const vmsegptridx_t segnum, const unsigned sidenum) {
+	const auto op = [&LevelSharedDestructibleLightState, &Flickering_light_state, &TmapInfo, &ret](const vmsegptridx_t segnum, const unsigned sidenum) {
 			//check if tmap2 casts light before turning the light on.  This
 			//is to keep us from turning on blown-out lights
-			if (TmapInfo[segnum->sides[sidenum].tmap_num2 & 0x3fff].lighting) {
-				ret |= add_light(segnum, sidenum); 		//any light sets flag
+			if (TmapInfo[segnum->unique_segment::sides[sidenum].tmap_num2 & 0x3fff].lighting) {
+				ret |= add_light(LevelSharedDestructibleLightState, segnum, sidenum);		//any light sets flag
 				enable_flicker(Flickering_light_state, segnum, sidenum);
 			}
 	};
@@ -112,14 +116,14 @@ static int do_light_on(const trigger &t)
 
 //turns lighting off.  returns true if lights were actually turned off. (they
 //would not be if they had previously been shot out).
-static int do_light_off(const trigger &t)
+static int do_light_off(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, const d_level_unique_tmap_info_state::TmapInfo_array &TmapInfo, d_flickering_light_state &Flickering_light_state, const trigger &t)
 {
 	int ret=0;
-	const auto op = [&ret](const vmsegptridx_t segnum, const unsigned sidenum) {
+	const auto op = [&LevelSharedDestructibleLightState, &Flickering_light_state, &TmapInfo, &ret](const vmsegptridx_t segnum, const unsigned sidenum) {
 			//check if tmap2 casts light before turning the light off.  This
 			//is to keep us from turning off blown-out lights
-			if (TmapInfo[segnum->sides[sidenum].tmap_num2 & 0x3fff].lighting) {
-				ret |= subtract_light(segnum, sidenum); 	//any light sets flag
+			if (TmapInfo[segnum->unique_segment::sides[sidenum].tmap_num2 & 0x3fff].lighting) {
+				ret |= subtract_light(LevelSharedDestructibleLightState, segnum, sidenum);	//any light sets flag
 				disable_flicker(Flickering_light_state, segnum, sidenum);
 			}
 	};
@@ -128,26 +132,26 @@ static int do_light_off(const trigger &t)
 }
 
 // Unlocks all doors linked to the switch.
-static void do_unlock_doors(const trigger &t)
+static void do_unlock_doors(fvcsegptr &vcsegptr, fvmwallptr &vmwallptr, const trigger &t)
 {
-	const auto op = [](const vmsegptr_t segp, const unsigned sidenum) {
-		const auto wall_num = segp->sides[sidenum].wall_num;
+	const auto op = [&vmwallptr](const shared_segment &segp, const unsigned sidenum) {
+		const auto wall_num = segp.sides[sidenum].wall_num;
 		auto &w = *vmwallptr(wall_num);
 		w.flags &= ~WALL_DOOR_LOCKED;
 		w.keys = KEY_NONE;
 	};
-	trigger_wall_op(t, vmsegptr, op);
+	trigger_wall_op(t, vcsegptr, op);
 }
 
 // Locks all doors linked to the switch.
-static void do_lock_doors(const trigger &t)
+static void do_lock_doors(fvcsegptr &vcsegptr, fvmwallptr &vmwallptr, const trigger &t)
 {
-	const auto op = [](const vmsegptr_t segp, const unsigned sidenum) {
-		const auto wall_num = segp->sides[sidenum].wall_num;
+	const auto op = [&vmwallptr](const shared_segment &segp, const unsigned sidenum) {
+		const auto wall_num = segp.sides[sidenum].wall_num;
 		auto &w = *vmwallptr(wall_num);
 		w.flags |= WALL_DOOR_LOCKED;
 	};
-	trigger_wall_op(t, vmsegptr, op);
+	trigger_wall_op(t, vcsegptr, op);
 }
 
 // Changes walls pointed to by a trigger. returns true if any walls changed
@@ -155,6 +159,9 @@ static int do_change_walls(const trigger &t, const uint8_t new_wall_type)
 {
 	int ret=0;
 
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vmwallptr = Walls.vmptr;
 	for (unsigned i = 0; i < t.num_links; ++i)
 	{
 		uint8_t cside;
@@ -174,7 +181,7 @@ static int do_change_walls(const trigger &t, const uint8_t new_wall_type)
 			}
 
 			wall *w0p;
-				const auto w0num = segp->sides[side].wall_num;
+			const auto w0num = segp->shared_segment::sides[side].wall_num;
 			if (const auto &&uw0p = vmwallptr.check_untrusted(w0num))
 				w0p = *uw0p;
 			else
@@ -184,17 +191,19 @@ static int do_change_walls(const trigger &t, const uint8_t new_wall_type)
 			}
 			auto &wall0 = *w0p;
 			imwallptr_t wall1 = nullptr;
-			if ((cside == side_none || csegp->sides[cside].wall_num == wall_none ||
-				(wall1 = vmwallptr(csegp->sides[cside].wall_num))->type == new_wall_type) &&
+			if ((cside == side_none || csegp->shared_segment::sides[cside].wall_num == wall_none ||
+				(wall1 = vmwallptr(csegp->shared_segment::sides[cside].wall_num))->type == new_wall_type) &&
 				wall0.type == new_wall_type)
 				continue;		//already in correct state, so skip
 
 			ret |= 1;
 
+			auto &Vertices = LevelSharedVertexState.get_vertices();
+			auto &vcvertptr = Vertices.vcptr;
 			switch (t.type)
 			{
 				case TT_OPEN_WALL:
-					if ((TmapInfo[segp->sides[side].tmap_num].flags & TMI_FORCE_FIELD)) {
+					if ((TmapInfo[segp->unique_segment::sides[side].tmap_num].flags & TMI_FORCE_FIELD)) {
 						ret |= 2;
 						const auto &&pos = compute_center_point_on_side(vcvertptr, segp, side);
 						digi_link_sound_to_pos( SOUND_FORCEFIELD_OFF, segp, side, pos, 0, F1_0 );
@@ -211,7 +220,7 @@ static int do_change_walls(const trigger &t, const uint8_t new_wall_type)
 					break;
 
 				case TT_CLOSE_WALL:
-					if ((TmapInfo[segp->sides[side].tmap_num].flags & TMI_FORCE_FIELD)) {
+					if ((TmapInfo[segp->unique_segment::sides[side].tmap_num].flags & TMI_FORCE_FIELD)) {
 						ret |= 2;
 						{
 						const auto &&pos = compute_center_point_on_side(vcvertptr, segp, side);
@@ -229,9 +238,9 @@ static int do_change_walls(const trigger &t, const uint8_t new_wall_type)
 					return 0;
 			}
 
-			kill_stuck_objects(segp->sides[side].wall_num);
+			LevelUniqueStuckObjectState.kill_stuck_objects(vmobjptr, segp->shared_segment::sides[side].wall_num);
 			if (wall1)
-				kill_stuck_objects(csegp->sides[cside].wall_num);
+				LevelUniqueStuckObjectState.kill_stuck_objects(vmobjptr, csegp->shared_segment::sides[cside].wall_num);
   	}
 	flush_fcd_cache();
 
@@ -257,25 +266,29 @@ static void do_matcen(const trigger &t)
 		trigger_matcen(vmsegptridx(i));
 }
 
-static void do_il_on(const trigger &t)
+static void do_il_on(fvcsegptridx &vcsegptridx, fvmwallptr &vmwallptr, const trigger &t)
 {
-	trigger_wall_op(t, vmsegptridx, wall_illusion_on);
+	trigger_wall_op(t, vcsegptridx, wall_illusion_on, vmwallptr);
 }
 
 namespace dsx {
-static void do_il_off(const trigger &t)
-{
+
 #if defined(DXX_BUILD_DESCENT_I)
-	auto &op = wall_illusion_off;
+static void do_il_off(fvcsegptridx &vcsegptridx, fvmwallptr &vmwallptr, const trigger &t)
+{
+	trigger_wall_op(t, vcsegptridx, wall_illusion_off, vmwallptr);
+}
 #elif defined(DXX_BUILD_DESCENT_II)
-	const auto op = [](const vmsegptridx_t &seg, unsigned side) {
-		wall_illusion_off(seg, side);
+static void do_il_off(fvcsegptridx &vcsegptridx, fvcvertptr &vcvertptr, fvmwallptr &vmwallptr, const trigger &t)
+{
+	const auto &&op = [&vcvertptr, &vmwallptr](const vcsegptridx_t seg, const unsigned side) {
+		wall_illusion_off(vmwallptr, seg, side);
 		const auto &&cp = compute_center_point_on_side(vcvertptr, seg, side);
 		digi_link_sound_to_pos(SOUND_WALL_REMOVED, seg, side, cp, 0, F1_0);
 	};
-#endif
-	trigger_wall_op(t, vmsegptridx, op);
+	trigger_wall_op(t, vcsegptridx, op);
 }
+#endif
 
 // Slight variation on window_event_result meaning
 // 'ignored' means we still want check_trigger to call multi_send_trigger
@@ -287,7 +300,11 @@ window_event_result check_trigger_sub(object &plrobj, const trgnum_t trigger_num
 
 	if ((Game_mode & GM_MULTI) && vcplayerptr(pnum)->connected != CONNECT_PLAYING) // as a host we may want to handle triggers for our clients. to do that properly we must check wether we (host) or client is actually playing.
 		return window_event_result::handled;
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vmtrgptr = Triggers.vmptr;
 	auto &trigger = *vmtrgptr(trigger_num);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vmwallptr = Walls.vmptr;
 
 #if defined(DXX_BUILD_DESCENT_I)
 	(void)shot;
@@ -334,11 +351,11 @@ window_event_result check_trigger_sub(object &plrobj, const trgnum_t trigger_num
 	}
 
 	if (trigger.flags & TRIGGER_ILLUSION_ON) {
-		do_il_on(trigger);
+		do_il_on(vcsegptridx, vmwallptr, trigger);
 	}
 
 	if (trigger.flags & TRIGGER_ILLUSION_OFF) {
-		do_il_off(trigger);
+		do_il_off(vcsegptridx, vmwallptr, trigger);
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
 	if (trigger.flags & TF_DISABLED)
@@ -347,6 +364,10 @@ window_event_result check_trigger_sub(object &plrobj, const trgnum_t trigger_num
 	if (trigger.flags & TF_ONE_SHOT)		//if this is a one-shot...
 		trigger.flags |= TF_DISABLED;		//..then don't let it happen again
 
+	auto &LevelSharedDestructibleLightState = LevelSharedSegmentState.DestructibleLights;
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	switch (trigger.type)
 	{
 		case TT_EXIT:
@@ -438,15 +459,14 @@ window_event_result check_trigger_sub(object &plrobj, const trgnum_t trigger_num
 			break;
 
 		case TT_UNLOCK_DOOR:
-			do_unlock_doors(trigger);
+			do_unlock_doors(vcsegptr, vmwallptr, trigger);
 			print_trigger_message(pnum, trigger, shot, "Door%s unlocked!");
 
 			break;
 
 		case TT_LOCK_DOOR:
-			do_lock_doors(trigger);
+			do_lock_doors(vcsegptr, vmwallptr, trigger);
 			print_trigger_message(pnum, trigger, shot, "Door%s locked!");
-
 			break;
 
 		case TT_OPEN_WALL:
@@ -470,22 +490,22 @@ window_event_result check_trigger_sub(object &plrobj, const trgnum_t trigger_num
 			break;
 
 		case TT_ILLUSION_ON:
-			do_il_on(trigger);
+			do_il_on(vcsegptridx, vmwallptr, trigger);
 			print_trigger_message(pnum, trigger, shot, "Illusion%s on!");
 			break;
 
 		case TT_ILLUSION_OFF:
-			do_il_off(trigger);
+			do_il_off(vcsegptridx, vcvertptr, vmwallptr, trigger);
 			print_trigger_message(pnum, trigger, shot, "Illusion%s off!");
 			break;
 
 		case TT_LIGHT_OFF:
-			if (do_light_off(trigger))
+			if (do_light_off(LevelSharedDestructibleLightState, TmapInfo, Flickering_light_state, trigger))
 				print_trigger_message(pnum, trigger, shot, "Light%s off!");
 			break;
 
 		case TT_LIGHT_ON:
-			if (do_light_on(trigger))
+			if (do_light_on(LevelSharedDestructibleLightState, TmapInfo, Flickering_light_state, trigger))
 				print_trigger_message(pnum, trigger, shot, "Light%s on!");
 
 			break;
@@ -509,6 +529,7 @@ window_event_result check_trigger(const vcsegptridx_t seg, short side, object &p
 #if defined(DXX_BUILD_DESCENT_I)
 	if (objnum == &plrobj)
 #elif defined(DXX_BUILD_DESCENT_II)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if (objnum == &plrobj || (objnum->type == OBJ_ROBOT && Robot_info[get_robot_id(objnum)].companion))
 #endif
 	{
@@ -521,10 +542,12 @@ window_event_result check_trigger(const vcsegptridx_t seg, short side, object &p
 			newdemo_record_trigger( seg, side, objnum,shot);
 #endif
 
-		const auto wall_num = seg->sides[side].wall_num;
+		const auto wall_num = seg->shared_segment::sides[side].wall_num;
 		if ( wall_num == wall_none ) return window_event_result::ignored;
 
-		const auto trigger_num = vmwallptr(wall_num)->trigger;
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
+		auto &vcwallptr = Walls.vcptr;
+		const auto trigger_num = vcwallptr(wall_num)->trigger;
 		if (trigger_num == trigger_none)
 			return window_event_result::ignored;
 
@@ -535,22 +558,24 @@ window_event_result check_trigger(const vcsegptridx_t seg, short side, object &p
 		}
 
 #if defined(DXX_BUILD_DESCENT_I)
+		auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+		auto &vmtrgptr = Triggers.vmptr;
 		auto &t = *vmtrgptr(trigger_num);
 		if (t.flags & TRIGGER_ONE_SHOT)
 		{
 			t.flags &= ~TRIGGER_ON;
 	
-			const auto &&csegp = vcsegptr(seg->children[side]);
+			auto &csegp = *vcsegptr(seg->children[side]);
 			auto cside = find_connect_side(seg, csegp);
 			Assert(cside != side_none);
 		
-			const auto cwall_num = csegp->sides[cside].wall_num;
+			const auto cwall_num = csegp.shared_segment::sides[cside].wall_num;
 			if (cwall_num == wall_none)
 				return window_event_result::ignored;
 			
-			const auto ctrigger_num = vmwallptr(cwall_num)->trigger;
-			const auto &&ct = vmtrgptr(ctrigger_num);
-			ct->flags &= ~TRIGGER_ON;
+			const auto ctrigger_num = vcwallptr(cwall_num)->trigger;
+			auto &ct = *vmtrgptr(ctrigger_num);
+			ct.flags &= ~TRIGGER_ON;
 		}
 #endif
 		if (Game_mode & GM_MULTI)
@@ -615,7 +640,7 @@ extern void v29_trigger_read(v29_trigger *t, PHYSFS_File *fp)
 	t->flags = PHYSFSX_readShort(fp);
 	t->value = PHYSFSX_readFix(fp);
 	PHYSFSX_readFix(fp);
-	t->link_num = PHYSFSX_readByte(fp);
+	PHYSFSX_readByte(fp);
 	t->num_links = PHYSFSX_readShort(fp);
 	for (unsigned i=0; i<MAX_WALLS_PER_LINK; i++ )
 		t->seg[i] = PHYSFSX_readShort(fp);
@@ -725,7 +750,7 @@ void v30_trigger_read_as_v31(PHYSFS_File *fp, trigger &t)
 #endif
 
 #if defined(DXX_BUILD_DESCENT_I)
-DEFINE_SERIAL_UDT_TO_MESSAGE(trigger, t, (serial::pad<1>(), t.flags, t.value, serial::pad<4>(), t.link_num, t.num_links, t.seg, t.side));
+DEFINE_SERIAL_UDT_TO_MESSAGE(trigger, t, (serial::pad<1>(), t.flags, t.value, serial::pad<5>(), t.num_links, t.seg, t.side));
 ASSERT_SERIAL_UDT_MESSAGE_SIZE(trigger, 54);
 #elif defined(DXX_BUILD_DESCENT_II)
 DEFINE_SERIAL_UDT_TO_MESSAGE(trigger, t, (t.type, t.flags, t.num_links, serial::pad<1>(), t.value, serial::pad<4>(), t.seg, t.side));
@@ -806,11 +831,7 @@ void v29_trigger_write(PHYSFS_File *fp, const trigger &rt)
 	PHYSFSX_writeFix(fp, t->value);
 	PHYSFSX_writeFix(fp, 0);
 
-#if defined(DXX_BUILD_DESCENT_I)
-	PHYSFSX_writeU8(fp, t->link_num);
-#elif defined(DXX_BUILD_DESCENT_II)
 	PHYSFSX_writeU8(fp, -1);	//t->link_num
-#endif
 	PHYSFS_writeSLE16(fp, t->num_links);
 
 	for (unsigned i = 0; i < MAX_WALLS_PER_LINK; i++)

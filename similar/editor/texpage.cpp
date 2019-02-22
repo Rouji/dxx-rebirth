@@ -105,6 +105,7 @@ static void texpage_redraw()
 //on CurrentTexture
 static void texpage_show_current()
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	gr_set_current_canvas(TmapCurrent->canvas);
 	PIGGY_PAGE_IN(Textures[CurrentTexture]);
 	gr_ubitmap(*grd_curcanv, GameBitmaps[Textures[CurrentTexture].index]);
@@ -276,19 +277,19 @@ void do_replacements(void)
 		Assert(old_tmap_num >= 0);
 		Assert(new_tmap_num >= 0);
 
-		range_for (const auto &&segp, vmsegptr)
+		range_for (unique_segment &segp, vmsegptr)
 		{
-			for (int sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++) {
-				const auto sidep = &segp->sides[sidenum];
-				if (sidep->tmap_num == old_tmap_num) {
-					sidep->tmap_num = new_tmap_num;
+			range_for (auto &sidep, segp.sides)
+			{
+				if (sidep.tmap_num == old_tmap_num) {
+					sidep.tmap_num = new_tmap_num;
 				}
-				if ((sidep->tmap_num2 != 0) && ((sidep->tmap_num2 & 0x3fff) == old_tmap_num)) {
+				if ((sidep.tmap_num2 != 0) && ((sidep.tmap_num2 & 0x3fff) == old_tmap_num)) {
 					if (new_tmap_num == 0) {
 						Int3();	//	Error.  You have tried to replace a tmap_num2 with 
 									//	the 0th tmap_num2 which is ILLEGAL!
 					} else {
-						sidep->tmap_num2 = new_tmap_num | (sidep->tmap_num2 & 0xc000);
+						sidep.tmap_num2 = new_tmap_num | (sidep.tmap_num2 & 0xc000);
 					}
 				}
 			}
@@ -301,16 +302,32 @@ void do_replacements_all(void)
 {
 	for (int i = 0; i < Last_level; i++)
 	{
-		load_level(Level_names[i]);
+		load_level(
+#if defined(DXX_BUILD_DESCENT_II)
+			LevelSharedSegmentState.DestructibleLights,
+#endif
+			Level_names[i]);
 		do_replacements();
-		save_level(Level_names[i]);
+		save_level(
+#if defined(DXX_BUILD_DESCENT_II)
+			LevelSharedSegmentState.DestructibleLights,
+#endif
+			Level_names[i]);
 	}
 
 	for (int i = 0; i < -Last_secret_level; i++)
 	{
-		load_level(Secret_level_names[i]);
+		load_level(
+#if defined(DXX_BUILD_DESCENT_II)
+			LevelSharedSegmentState.DestructibleLights,
+#endif
+			Secret_level_names[i]);
 		do_replacements();
-		save_level(Secret_level_names[i]);
+		save_level(
+#if defined(DXX_BUILD_DESCENT_II)
+			LevelSharedSegmentState.DestructibleLights,
+#endif
+			Secret_level_names[i]);
 	}
 
 }

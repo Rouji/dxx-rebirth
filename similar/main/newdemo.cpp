@@ -277,6 +277,8 @@ static void my_extract_shortpos(object_base &objp, const shortpos *const spp)
 	segnum_t segnum = spp->segment;
 	objp.segnum = segnum;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	auto &v = *vcvertptr(vcsegptr(segnum)->verts[0]);
 	objp.pos.x = (spp->xo << RELPOS_PRECISION) + v.x;
 	objp.pos.y = (spp->yo << RELPOS_PRECISION) + v.y;
@@ -396,7 +398,7 @@ static void nd_write_shortpos(const vcobjptr_t obj)
 	shortpos sp;
 	ubyte render_type;
 
-	create_shortpos_native(&sp, obj);
+	create_shortpos_native(LevelSharedSegmentState, sp, obj);
 
 	render_type = obj->render_type;
 	if (((render_type == RT_POLYOBJ) || (render_type == RT_HOSTAGE) || (render_type == RT_MORPH)) || (obj->type == OBJ_CAMERA)) {
@@ -546,7 +548,11 @@ static void nd_read_shortpos(object_base &obj)
 
 	my_extract_shortpos(obj, &sp);
 	if (obj.type == OBJ_FIREBALL && get_fireball_id(obj) == VCLIP_MORPHING_ROBOT && render_type == RT_FIREBALL && obj.control_type == CT_EXPLOSION)
-		extract_orient_from_segment(&obj.orient, vcsegptr(obj.segnum));
+	{
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
+		extract_orient_from_segment(vcvertptr, obj.orient, vcsegptr(obj.segnum));
+	}
 
 }
 
@@ -555,6 +561,7 @@ object *prev_obj=NULL;      //ptr to last object read in
 namespace dsx {
 static void nd_read_object(const vmobjptridx_t obj)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	short shortsig = 0;
 	const auto &pl_info = get_local_plrobj().ctype.player_info;
 	const auto saved = (&pl_info == &obj->ctype.player_info)
@@ -594,6 +601,7 @@ static void nd_read_object(const vmobjptridx_t obj)
 
 	obj->attached_obj = object_none;
 
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	switch(obj->type) {
 
 	case OBJ_HOSTAGE:
@@ -811,6 +819,7 @@ static void nd_read_object(const vmobjptridx_t obj)
 namespace dsx {
 static void nd_write_object(const vcobjptr_t obj)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	int life;
 	short shortsig = 0;
 
@@ -918,6 +927,7 @@ static void nd_write_object(const vcobjptr_t obj)
 
 	}
 
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	switch (obj->render_type) {
 
 	case RT_NONE:
@@ -1170,7 +1180,7 @@ void newdemo_record_render_object(const vmobjptridx_t obj)
 }
 
 namespace dsx {
-void newdemo_record_viewer_object(const vmobjptridx_t obj)
+void newdemo_record_viewer_object(const vcobjptridx_t obj)
 {
 	if (!nd_record_v_recordframe)
 		return;
@@ -1571,7 +1581,9 @@ void newdemo_set_new_level(int level_num)
 #if defined(DXX_BUILD_DESCENT_II)
 	if (nd_record_v_juststarted==1)
 	{
-		nd_write_int(Num_walls);
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
+		auto &vcwallptr = Walls.vcptr;
+		nd_write_int(Walls.get_count());
 		range_for (const auto &&wp, vcwallptr)
 		{
 			auto &w = *wp;
@@ -1579,10 +1591,9 @@ void newdemo_set_new_level(int level_num)
 			nd_write_byte (w.flags);
 			nd_write_byte (w.state);
 
-			int side = w.sidenum;
-			segment *seg = &Segments[w.segnum];
-			nd_write_short (seg->sides[side].tmap_num);
-			nd_write_short (seg->sides[side].tmap_num2);
+			const auto &side = vcsegptr(w.segnum)->unique_segment::sides[w.sidenum];
+			nd_write_short (side.tmap_num);
+			nd_write_short (side.tmap_num2);
 			nd_record_v_juststarted=0;
 		}
 	}
@@ -1613,6 +1624,8 @@ static void newdemo_record_oneframeevent_update(int wallupdate)
 	// This will record tmaps for all walls and properly show doors which were opened before demo recording started.
 	if (wallupdate)
 	{
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
+		auto &vcwallptr = Walls.vcptr;
 		range_for (const auto &&wp, vcwallptr)
 		{
 			auto &w = *wp;
@@ -1620,15 +1633,16 @@ static void newdemo_record_oneframeevent_update(int wallupdate)
 			auto seg = &Segments[w.segnum];
 			side = w.sidenum;
 			// actually this is kinda stupid: when playing ther same tmap will be put on front and back side of the wall ... for doors this is stupid so just record the front side which will do for doors just fine ...
-			if (auto tmap_num = seg->sides[side].tmap_num)
+			auto &uside = seg->unique_segment::sides[side];
+			if (const auto tmap_num = uside.tmap_num)
 				newdemo_record_wall_set_tmap_num1(w.segnum,side,w.segnum,side,tmap_num);
-			if (auto tmap_num2 = seg->sides[side].tmap_num2)
+			if (const auto tmap_num2 = uside.tmap_num2)
 				newdemo_record_wall_set_tmap_num2(w.segnum,side,w.segnum,side,tmap_num2);
 		}
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
 	(void)wallupdate;
-	if (Viewer == Guided_missile[Player_num])
+	if (Viewer == LevelUniqueObjectState.Guided_missile.get_player_active_guided_missile(LevelUniqueObjectState.get_objects().vmptr, Player_num))
 		newdemo_record_guided_start();
 	else
 		newdemo_record_guided_end();
@@ -1728,8 +1742,8 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 
 		range_for (auto &i, Players)
 		{
-			const auto &&objp = vmobjptr(i.objnum);
-			auto &player_info = objp->ctype.player_info;
+			auto &objp = *vmobjptr(i.objnum);
+			auto &player_info = objp.ctype.player_info;
 			player_info.powerup_flags &= ~(PLAYER_FLAGS_CLOAKED | PLAYER_FLAGS_INVULNERABLE);
 			DXX_MAKE_VAR_UNDEFINED(player_info.cloak_time);
 			DXX_MAKE_VAR_UNDEFINED(player_info.invulnerable_time);
@@ -1849,7 +1863,8 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 #if defined(DXX_BUILD_DESCENT_I)
 	if (!shareware)
 	{
-		if ((purpose != PURPOSE_REWRITE) && !load_mission_by_name(current_mission)) {
+		if ((purpose != PURPOSE_REWRITE) && load_mission_by_name(current_mission))
+		{
 			if (purpose == PURPOSE_CHOSE_PLAY) {
 				nm_messagebox( NULL, 1, TXT_OK, TXT_NOMISSION4DEMO, current_mission );
 			}
@@ -1857,7 +1872,8 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 		}
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
-	if (!load_mission_by_name(current_mission)) {
+	if (load_mission_by_name(current_mission))
+	{
 		if (purpose != PURPOSE_RANDOM_PLAY) {
 			nm_messagebox( NULL, 1, TXT_OK, TXT_NOMISSION4DEMO, current_mission );
 		}
@@ -1934,6 +1950,8 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 
 static void newdemo_pop_ctrlcen_triggers()
 {
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	for (int i = 0; i < ControlCenterTriggers.num_links; i++) {
 		const auto &&seg = vmsegptridx(ControlCenterTriggers.seg[i]);
 		const auto side = ControlCenterTriggers.side[i];
@@ -1949,7 +1967,7 @@ static void newdemo_pop_ctrlcen_triggers()
 		}
 		const auto &&csegp = vmsegptr(csegi);
 		auto cside = find_connect_side(seg, csegp);
-		const auto wall_num = seg->sides[side].wall_num;
+		const auto wall_num = seg->shared_segment::sides[side].wall_num;
 		if (wall_num == wall_none)
 		{
 			/* Some levels specify control center triggers for
@@ -1962,9 +1980,9 @@ static void newdemo_pop_ctrlcen_triggers()
 		const auto anim_num = vcwallptr(wall_num)->clip_num;
 		const auto n = WallAnims[anim_num].num_frames;
 		const auto t = WallAnims[anim_num].flags & WCF_TMAP1
-			? &side::tmap_num
-			: &side::tmap_num2;
-		seg->sides[side].*t = csegp->sides[cside].*t = WallAnims[anim_num].frames[n-1];
+			? &unique_side::tmap_num
+			: &unique_side::tmap_num2;
+		seg->unique_segment::sides[side].*t = csegp->unique_segment::sides[cside].*t = WallAnims[anim_num].frames[n-1];
 	}
 }
 
@@ -1982,12 +2000,18 @@ static int newdemo_read_frame_information(int rewrite)
 			segp->objects = object_none;
 		}
 
-	reset_objects(ObjectState, 1);
+	reset_objects(LevelUniqueObjectState, 1);
 	auto &plrobj = get_local_plrobj();
 	plrobj.ctype.player_info.homing_object_dist = -1;
 
 	prev_obj = NULL;
 
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &vcwallptr = Walls.vcptr;
+#endif
+	auto &vmwallptr = Walls.vmptr;
 	while( !done ) {
 		nd_read_byte(&c);
 		if (nd_playback_v_bad_read) { done = -1; break; }
@@ -2046,7 +2070,9 @@ static int newdemo_read_frame_information(int rewrite)
 			else
 #endif
 			{
-			nd_read_object(vmobjptridx(Viewer));
+				/* As usual, the demo code breaks the rules. */
+				const auto &&viewer_vmobj = Objects.vmptridx(const_cast<object *>(Viewer));
+			nd_read_object(viewer_vmobj);
 			if (nd_playback_v_bad_read) { done = -1; break; }
 			if (rewrite)
 			{
@@ -2063,7 +2089,7 @@ static int newdemo_read_frame_information(int rewrite)
 
 				if (segnum > Highest_segment_index)
 					segnum = 0;
-				obj_link_unchecked(Objects.vmptr, Objects.vmptridx(Viewer), Segments.vmptridx(segnum));
+				obj_link_unchecked(Objects.vmptr, viewer_vmobj, Segments.vmptridx(segnum));
 			}
 			}
 		}
@@ -2071,7 +2097,7 @@ static int newdemo_read_frame_information(int rewrite)
 
 		case ND_EVENT_RENDER_OBJECT:       // Followed by an object structure
 		{
-			const auto &&obj = obj_allocate(ObjectState);
+			const auto &&obj = obj_allocate(LevelUniqueObjectState);
 			if (obj==object_none)
 				break;
 			nd_read_object(obj);
@@ -2272,10 +2298,14 @@ static int newdemo_read_frame_information(int rewrite)
 							* when the wall is valid, but there is no
 							* trigger on the wall.
                             */
-                        if (segp->sides[side].wall_num != wall_none)
+						auto &sside = segp->shared_segment::sides[side];
+						const auto wall_num = sside.wall_num;
+                        if (wall_num != wall_none)
                         {
 #if defined(DXX_BUILD_DESCENT_II)
-							auto &w = *vcwallptr(segp->sides[side].wall_num);
+							auto &w = *vcwallptr(wall_num);
+							auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+							auto &vctrgptr = Triggers.vcptr;
 							if (w.trigger != trigger_none && vctrgptr(w.trigger)->type == TT_SECRET_EXIT)
 							{
                                         int truth;
@@ -2327,7 +2357,7 @@ static int newdemo_read_frame_information(int rewrite)
 			if (newdemo_read( md->submodel_active, sizeof(md->submodel_active), 1 )!=1) { done=-1; break; }
 			if (newdemo_read( md->submodel_startpoints, sizeof(md->submodel_startpoints), 1 )!=1) { done=-1; break; }
 #endif
-			const auto &&obj = obj_allocate(ObjectState);
+			const auto &&obj = obj_allocate(LevelUniqueObjectState);
 			if (obj==object_none)
 				break;
 			nd_read_object(obj);
@@ -2361,7 +2391,7 @@ static int newdemo_read_frame_information(int rewrite)
 				break;
 			}
 			if (Newdemo_vcr_state != ND_STATE_PAUSED)
-				wall_toggle(vmsegptridx(segnum), side);
+				wall_toggle(vmwallptr, vmsegptridx(segnum), side);
 		}
 			break;
 
@@ -2642,15 +2672,16 @@ static int newdemo_read_frame_information(int rewrite)
 			if (Newdemo_vcr_state != ND_STATE_PAUSED)
 			{
 #if defined(DXX_BUILD_DESCENT_I)
-				check_effect_blowup(vmsegptridx(segnum), side, pnt, nullptr, 0, 0);
+				check_effect_blowup(LevelSharedDestructibleLightState, Vclip, vmsegptridx(segnum), side, pnt, nullptr, 0, 0);
 #elif defined(DXX_BUILD_DESCENT_II)
+				auto &LevelSharedDestructibleLightState = LevelSharedSegmentState.DestructibleLights;
 			//create a dummy object which will be the weapon that hits
 			//the monitor. the blowup code wants to know who the parent of the
 			//laser is, so create a laser whose parent is the player
 				laser_parent dummy;
 				dummy.parent_type = OBJ_PLAYER;
 				dummy.parent_num = Player_num;
-				check_effect_blowup(vmsegptridx(segnum), side, pnt, dummy, 0, 0);
+				check_effect_blowup(LevelSharedDestructibleLightState, Vclip, vmsegptridx(segnum), side, pnt, dummy, 0, 0);
 #endif
 			}
 			break;
@@ -2729,7 +2760,7 @@ static int newdemo_read_frame_information(int rewrite)
 				break;
 			}
 			if ((Newdemo_vcr_state != ND_STATE_PAUSED) && (Newdemo_vcr_state != ND_STATE_REWINDING) && (Newdemo_vcr_state != ND_STATE_ONEFRAMEBACKWARD))
-				vmsegptr(seg)->sides[side].tmap_num = vmsegptr(cseg)->sides[cside].tmap_num = tmap;
+				vmsegptr(seg)->unique_segment::sides[side].tmap_num = vmsegptr(cseg)->unique_segment::sides[cside].tmap_num = tmap;
 			break;
 		}
 
@@ -2754,8 +2785,9 @@ static int newdemo_read_frame_information(int rewrite)
 			if ((Newdemo_vcr_state != ND_STATE_PAUSED) && (Newdemo_vcr_state != ND_STATE_REWINDING) && (Newdemo_vcr_state != ND_STATE_ONEFRAMEBACKWARD)) {
 				assert(tmap != 0);
 				auto &s0 = *vmsegptr(seg);
-				assert(s0.sides[side].tmap_num2 != 0);
-				s0.sides[side].tmap_num2 = vmsegptr(cseg)->sides[cside].tmap_num2 = tmap;
+				auto &tmap_num2 = s0.unique_segment::sides[side].tmap_num2;
+				assert(tmap_num2 != 0);
+				tmap_num2 = vmsegptr(cseg)->unique_segment::sides[cside].tmap_num2 = tmap;
 			}
 			break;
 		}
@@ -3039,11 +3071,11 @@ static int newdemo_read_frame_information(int rewrite)
 				const auto &&segp = vmsegptridx(segnum);
 				const auto &&csegp = vmsegptr(segp->children[side]);
 				const auto &&cside = find_connect_side(segp, csegp);
-				const auto anim_num = vmwallptr(segp->sides[side].wall_num)->clip_num;
+				const auto anim_num = vmwallptr(segp->shared_segment::sides[side].wall_num)->clip_num;
 				const auto t = WallAnims[anim_num].flags & WCF_TMAP1
-					? &side::tmap_num
-					: &side::tmap_num2;
-				segp->sides[side].*t = csegp->sides[cside].*t = WallAnims[anim_num].frames[0];
+					? &unique_side::tmap_num
+					: &unique_side::tmap_num2;
+				segp->unique_segment::sides[side].*t = csegp->unique_segment::sides[cside].*t = WallAnims[anim_num].frames[0];
 			}
 			break;
 		}
@@ -3106,7 +3138,7 @@ static int newdemo_read_frame_information(int rewrite)
 				w.type = type;
 				w.state = state;
 				w.cloak_value = cloak_value;
-				auto &uvl = vmsegptr(w.segnum)->sides[w.sidenum].uvls;
+				auto &uvl = vmsegptr(w.segnum)->unique_segment::sides[w.sidenum].uvls;
 				uvl[0].l = (static_cast<int>(l0)) << 8;
 				uvl[1].l = (static_cast<int>(l1)) << 8;
 				uvl[2].l = (static_cast<int>(l2)) << 8;
@@ -3117,7 +3149,7 @@ static int newdemo_read_frame_information(int rewrite)
 				w.type = type;
 				w.state = state;
 				w.cloak_value = cloak_value;
-				auto &uvl = vmsegptr(w.segnum)->sides[w.sidenum].uvls;
+				auto &uvl = vmsegptr(w.segnum)->unique_segment::sides[w.sidenum].uvls;
 				uvl[0].l = (static_cast<int>(l0)) << 8;
 				uvl[1].l = (static_cast<int>(l1)) << 8;
 				uvl[2].l = (static_cast<int>(l2)) << 8;
@@ -3179,7 +3211,7 @@ static int newdemo_read_frame_information(int rewrite)
 				nd_read_int (&num_walls);
 				Walls.set_count(num_walls);
 				if (rewrite)
-					nd_write_int (Num_walls);
+					nd_write_int (Walls.get_count());
 				range_for (const auto &&wp, vmwallptr)
 				// restore the walls
 				{
@@ -3188,28 +3220,17 @@ static int newdemo_read_frame_information(int rewrite)
 					nd_read_byte(&w.flags);
 					nd_read_byte(&w.state);
 
-					segment *seg;
-					int side;
-					if (rewrite)	// hack some dummy variables
-					{
-						seg = &Segments.front();
-						side = 0;
-					}
-					else
-					{
-						seg = &Segments[w.segnum];
-						side = w.sidenum;
-					}
-					nd_read_short (&seg->sides[side].tmap_num);
-					nd_read_short (&seg->sides[side].tmap_num2);
+					auto &side = vmsegptr(w.segnum)->unique_segment::sides[w.sidenum];
+					nd_read_short (&side.tmap_num);
+					nd_read_short (&side.tmap_num2);
 
 					if (rewrite)
 					{
 						nd_write_byte (w.type);
 						nd_write_byte (w.flags);
 						nd_write_byte (w.state);
-						nd_write_short (seg->sides[side].tmap_num);
-						nd_write_short (seg->sides[side].tmap_num2);
+						nd_write_short (side.tmap_num);
+						nd_write_short (side.tmap_num2);
 					}
 				}
 
@@ -3219,7 +3240,7 @@ static int newdemo_read_frame_information(int rewrite)
 
 				Game_mode = Newdemo_game_mode;
 				if (game_mode_hoard())
-					init_hoard_data();
+					init_hoard_data(Vclip);
 
 				if (game_mode_capture_flag() || game_mode_hoard())
 					multi_apply_goal_textures ();
@@ -3886,7 +3907,7 @@ static void newdemo_write_end()
 	nd_write_byte(ND_EVENT_EOF);
 }
 
-static bool guess_demo_name(ntstring<PATH_MAX - 1> &filename)
+static bool guess_demo_name(ntstring<PATH_MAX - 16> &filename)
 {
 	filename[0] = 0;
 	const auto &n = CGameArg.SysRecordDemoNameTemplate;
@@ -3974,7 +3995,7 @@ void newdemo_stop_recording()
 {
 	int exit;
 	static sbyte tmpcnt = 0;
-	ntstring<PATH_MAX - 1> filename;
+	ntstring<PATH_MAX - 16> filename;
 
 	exit = 0;
 

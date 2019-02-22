@@ -1272,11 +1272,11 @@ void process_super_mines_frame(void)
 
 //this function is for when the player intentionally drops a powerup
 //this function is based on drop_powerup()
-imobjptridx_t spit_powerup(const vmobjptr_t spitter, int id,int seed)
+imobjptridx_t spit_powerup(const d_vclip_array &Vclip, const object_base &spitter, const unsigned id, const unsigned seed)
 {
 	d_srand(seed);
 
-	auto new_velocity = vm_vec_scale_add(spitter->mtype.phys_info.velocity,spitter->orient.fvec,i2f(SPIT_SPEED));
+	auto new_velocity = vm_vec_scale_add(spitter.mtype.phys_info.velocity, spitter.orient.fvec, i2f(SPIT_SPEED));
 
 	new_velocity.x += (d_rand() - 16384) * SPIT_SPEED * 2;
 	new_velocity.y += (d_rand() - 16384) * SPIT_SPEED * 2;
@@ -1292,7 +1292,7 @@ imobjptridx_t spit_powerup(const vmobjptr_t spitter, int id,int seed)
 	//combined radii.  So we need to create powerups pretty far out from
 	//the player.
 
-	const auto new_pos = vm_vec_scale_add(spitter->pos,spitter->orient.fvec,spitter->size);
+	const auto new_pos = vm_vec_scale_add(spitter.pos, spitter.orient.fvec, spitter.size);
 
 	if (Game_mode & GM_MULTI)
 	{
@@ -1302,7 +1302,7 @@ imobjptridx_t spit_powerup(const vmobjptr_t spitter, int id,int seed)
 		}
 	}
 
-	const auto &&obj = obj_create(OBJ_POWERUP, id, vmsegptridx(spitter->segnum), new_pos, &vmd_identity_matrix, Powerup_info[id].size, CT_POWERUP, MT_PHYSICS, RT_POWERUP);
+	const auto &&obj = obj_create(OBJ_POWERUP, id, vmsegptridx(spitter.segnum), new_pos, &vmd_identity_matrix, Powerup_info[id].size, CT_POWERUP, MT_PHYSICS, RT_POWERUP);
 
 	if (obj == object_none)
 	{
@@ -1319,7 +1319,7 @@ imobjptridx_t spit_powerup(const vmobjptr_t spitter, int id,int seed)
 	obj->rtype.vclip_info.frametime = Vclip[obj->rtype.vclip_info.vclip_num].frame_time;
 	obj->rtype.vclip_info.framenum = 0;
 
-	if (spitter == ConsoleObject)
+	if (&spitter == ConsoleObject)
 		obj->ctype.powerup_info.flags |= PF_SPAT_BY_PLAYER;
 
 	switch (get_powerup_id(obj)) {
@@ -1341,8 +1341,8 @@ imobjptridx_t spit_powerup(const vmobjptr_t spitter, int id,int seed)
 
 void DropCurrentWeapon (player_info &player_info)
 {
-	auto &Objects = ObjectState.get_objects();
-	if (ObjectState.num_objects >= Objects.size())
+	auto &Objects = LevelUniqueObjectState.get_objects();
+	if (LevelUniqueObjectState.num_objects >= Objects.size())
 		return;
 
 	powerup_type_t drop_type;
@@ -1393,7 +1393,7 @@ void DropCurrentWeapon (player_info &player_info)
 	}
 
 	const auto seed = d_rand();
-	const auto objnum = spit_powerup(vmobjptr(ConsoleObject), drop_type, seed);
+	const auto objnum = spit_powerup(Vclip, vmobjptr(ConsoleObject), drop_type, seed);
 	if (objnum == object_none)
 	{
 		HUD_init_message(HM_DEFAULT, "Failed to drop %s!", weapon_name);
@@ -1449,8 +1449,8 @@ void DropSecondaryWeapon (player_info &player_info)
 	int seed;
 	ushort sub_ammo=0;
 
-	auto &Objects = ObjectState.get_objects();
-	if (ObjectState.num_objects >= Objects.size())
+	auto &Objects = LevelUniqueObjectState.get_objects();
+	if (LevelUniqueObjectState.num_objects >= Objects.size())
 		return;
 
 	auto &Secondary_weapon = player_info.Secondary_weapon;
@@ -1552,7 +1552,7 @@ void DropSecondaryWeapon (player_info &player_info)
 
 	seed = d_rand();
 
-	auto objnum = spit_powerup(vmobjptr(ConsoleObject), weapon_drop_id, seed);
+	auto objnum = spit_powerup(Vclip, vmobjptr(ConsoleObject), weapon_drop_id, seed);
 
 	if (objnum == object_none)
 		return;

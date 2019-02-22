@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -261,7 +261,7 @@ struct MVE_audio_clamp
 static int audiobuf_created = 0;
 static void mve_audio_callback(void *userdata, unsigned char *stream, int len);
 static array<std::unique_ptr<short[], MVE_audio_deleter>, TOTAL_AUDIO_BUFFERS> mve_audio_buffers;
-static int    mve_audio_buflens[TOTAL_AUDIO_BUFFERS];
+static array<unsigned, TOTAL_AUDIO_BUFFERS> mve_audio_buflens;
 static int    mve_audio_curbuf_curpos=0;
 static int mve_audio_bufhead=0;
 static int mve_audio_buftail=0;
@@ -393,8 +393,7 @@ static int create_audiobuf_handler(unsigned char, unsigned char minor, const uns
 #endif
 
 	mve_audio_buffers = {};
-	memset(mve_audio_buflens, 0, sizeof(mve_audio_buflens));
-
+	mve_audio_buflens = {};
 	return 1;
 }
 
@@ -415,17 +414,6 @@ static int play_audio_handler(unsigned char, unsigned char, const unsigned char 
 
 static int audio_data_handler(unsigned char major, unsigned char, const unsigned char *data, int, void *)
 {
-
-#if DXX_USE_SDLMIXER
-	// MD2211: for audio conversion
-	SDL_AudioCVT cvt;
-	int clen;
-	int out_freq;
-	Uint16 out_format;
-	int out_channels;
-	// end MD2211
-#endif
-
 	static const int selected_chan=1;
 	int chan;
 	int nsamp;
@@ -474,37 +462,44 @@ static int audio_data_handler(unsigned char major, unsigned char, const unsigned
 				p.reset(reinterpret_cast<int16_t *>(mve_alloc(nsamp)));
 				memset(p.get(), 0, nsamp); /* XXX */
 			}
-			mve_audio_buflens[mve_audio_buftail] = nsamp;
-			mve_audio_buffers[mve_audio_buftail] = std::move(p);
+			unsigned buflen = nsamp;
 
 			// MD2211: the following block does on-the-fly audio conversion for SDL_mixer
 #if DXX_USE_SDLMIXER
 			if (!CGameArg.SndDisableSdlMixer) {
 				// build converter: in = MVE format, out = SDL_mixer output
+				int out_freq;
+				Uint16 out_format;
+				int out_channels;
 				Mix_QuerySpec(&out_freq, &out_format, &out_channels); // get current output settings
 
+				SDL_AudioCVT cvt{};
 				SDL_BuildAudioCVT(&cvt, mve_audio_spec->format, mve_audio_spec->channels, mve_audio_spec->freq,
 					out_format, out_channels, out_freq);
 
-				clen = nsamp * cvt.len_mult;
 				RAIIdmem<uint8_t[]> cvtbuf;
-				MALLOC(cvtbuf, uint8_t[], clen);
+				MALLOC(cvtbuf, uint8_t[], nsamp * cvt.len_mult);
 				cvt.buf = cvtbuf.get();
 				cvt.len = nsamp;
 
 				// read the audio buffer into the conversion buffer
-				memcpy(cvt.buf, mve_audio_buffers[mve_audio_buftail].get(), nsamp);
+				memcpy(cvt.buf, p.get(), nsamp);
 
 				// do the conversion
 				if (SDL_ConvertAudio(&cvt))
-					con_puts(CON_DEBUG,"audio conversion failed!");
-
+					con_printf(CON_URGENT, "%s:%u: SDL_ConvertAudio failed: nsamp=%u out_format=%i out_channels=%i out_freq=%i", __FILE__, __LINE__, nsamp, out_format, out_channels, out_freq);
+				else
+				{
 				// copy back to the audio buffer
-				mve_audio_buffers[mve_audio_buftail].reset(reinterpret_cast<int16_t *>(mve_alloc(clen))); // free the old audio buffer
-				mve_audio_buflens[mve_audio_buftail] = clen;
-				memcpy(mve_audio_buffers[mve_audio_buftail].get(), cvt.buf, clen);
+					const std::size_t converted_buffer_size = cvt.len_cvt;
+					p.reset(reinterpret_cast<int16_t *>(mve_alloc(converted_buffer_size))); // free the old audio buffer
+					buflen = converted_buffer_size;
+					memcpy(p.get(), cvt.buf, converted_buffer_size);
+				}
 			}
 #endif
+			mve_audio_buffers[mve_audio_buftail] = std::move(p);
+			mve_audio_buflens[mve_audio_buftail] = buflen;
 
 			if (++mve_audio_buftail == TOTAL_AUDIO_BUFFERS)
 				mve_audio_buftail = 0;
@@ -574,7 +569,7 @@ static int create_videobuf_handler(unsigned char, unsigned char minor, const uns
 	g_vBuffers.assign(g_width * g_height * 8, 0);
 	g_vBackBuf1 = &g_vBuffers[0];
 	if (truecolor) {
-		g_vBackBuf2 = reinterpret_cast<uint8_t *>(reinterpret_cast<uint16_t *>(g_vBackBuf1)) + (g_width * g_height);
+		g_vBackBuf2 = reinterpret_cast<uint8_t *>(reinterpret_cast<uint16_t *>(g_vBackBuf1) + (g_width * g_height));
 	} else {
 		g_vBackBuf2 = (g_vBackBuf1 + (g_width * g_height));
 	}
@@ -701,7 +696,7 @@ int MVE_rmPrepMovie(MVESTREAM_ptr_t &pMovie, void *src, int x, int y, int)
 	g_destX = x;
 	g_destY = y;
 
-	auto mve = pMovie.get();
+	auto &mve = *pMovie.get();
 	mve_set_handler(mve, MVE_OPCODE_ENDOFSTREAM,          end_movie_handler);
 	mve_set_handler(mve, MVE_OPCODE_ENDOFCHUNK,           end_chunk_handler);
 	mve_set_handler(mve, MVE_OPCODE_CREATETIMER,          create_timer_handler);
@@ -736,7 +731,7 @@ void MVE_getVideoSpec(MVE_videoSpec *vSpec)
 }
 
 
-int MVE_rmStepMovie(MVESTREAM *const mve)
+MVE_StepStatus MVE_rmStepMovie(MVESTREAM &mve)
 {
 	static int init_timer=0;
 	int cont=1;
@@ -749,7 +744,7 @@ int MVE_rmStepMovie(MVESTREAM *const mve)
 	g_frameUpdated = 0;
 
 	if (!cont)
-		return MVE_ERR_EOF;
+		return MVE_StepStatus::EndOfFile;
 
 	if (micro_frame_delay  && !init_timer) {
 		timer_start();
@@ -758,7 +753,7 @@ int MVE_rmStepMovie(MVESTREAM *const mve)
 
 	do_timer_wait();
 
-	return 0;
+	return MVE_StepStatus::Continue;
 }
 
 void MVE_rmEndMovie(std::unique_ptr<MVESTREAM>)
@@ -775,7 +770,7 @@ void MVE_rmEndMovie(std::unique_ptr<MVESTREAM>)
 		mve_audio_canplay = 0;
 	}
 	mve_audio_buffers = {};
-	memset(mve_audio_buflens, 0, sizeof(mve_audio_buflens));
+	mve_audio_buflens = {};
 
 	mve_audio_curbuf_curpos=0;
 	mve_audio_bufhead=0;

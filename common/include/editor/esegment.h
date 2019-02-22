@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -26,7 +26,6 @@ extern imsegptridx_t Markedsegp;			// Marked segment, used in conjunction with *
 extern array<segment *, MAX_GROUPS+1> Groupsegp;
 #endif
 extern	int		Markedside;				// Marked side on Markedsegp.
-extern array<uint8_t, MAX_VERTICES> Vertex_active; // !0 means vertex is in use, 0 means not in use.
 
 // The extra group in the following arrays is used for group rotation.
 extern array<group, MAX_GROUPS+1> GroupList;

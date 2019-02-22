@@ -66,7 +66,6 @@ using std::max;
 
 static int Do_dynamic_light=1;
 static int use_fcd_lighting;
-array<g3s_lrgb, MAX_VERTICES> Dynamic_light;
 
 #define	HEADLIGHT_CONE_DOT	(F1_0*9/10)
 #define	HEADLIGHT_SCALE		(F1_0*10)
@@ -100,6 +99,9 @@ static void apply_light(fvmsegptridx &vmsegptridx, const g3s_lrgb obj_light_emis
 				is_marker = 1;
 #endif
 
+		auto &Dynamic_light = LevelUniqueLightState.Dynamic_light;
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
 		// for pretty dim sources, only process vertices in object's own segment.
 		//	12/04/95, MK, markers only cast light in own segment.
 		if ((abs(obji_64) <= F1_0*8) || is_marker) {
@@ -251,13 +253,16 @@ static array<const object *, MAX_HEADLIGHTS> Headlights;
 
 // ---------------------------------------------------------
 namespace dsx {
-static g3s_lrgb compute_light_emission(const vmobjptridx_t obj)
+static g3s_lrgb compute_light_emission(const d_vclip_array &Vclip, const vmobjptridx_t obj)
 {
 	int compute_color = 0;
 	float cscale = 255.0;
 	fix light_intensity = 0;
 	g3s_lrgb lemission, obj_color = { 255, 255, 255 };
-        
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+#endif
+
 	switch (obj->type)
 	{
 		case OBJ_PLAYER:
@@ -398,6 +403,7 @@ static g3s_lrgb compute_light_emission(const vmobjptridx_t obj)
 				break; // no object - no light
 			case RT_POLYOBJ:
 			{
+				auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 				polymodel *po = &Polygon_models[obj->rtype.pobj_info.model_num];
 				if (po->n_textures <= 0)
 				{
@@ -494,14 +500,16 @@ void set_dynamic_light(render_state_t &rstate)
 	std::bitset<MAX_VERTICES> render_vertex_flags;
 
 	//	Create list of vertices that need to be looked at for setting of ambient light.
+	auto &Dynamic_light = LevelUniqueLightState.Dynamic_light;
 	uint_fast32_t n_render_vertices = 0;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
 	range_for (const auto segnum, partial_const_range(rstate.Render_list, rstate.N_render_segs))
 	{
 		if (segnum != segment_none) {
 			auto &vp = Segments[segnum].verts;
 			range_for (const auto vnum, vp)
 			{
-				if (vnum > Highest_vertex_index)
+				if (vnum > Vertices.get_count() - 1)
 				{
 					Int3();		//invalid vertex number
 					continue;	//ignore it, and go on to next one
@@ -523,7 +531,7 @@ void set_dynamic_light(render_state_t &rstate)
 
 	range_for (const auto &&obj, vmobjptridx)
 	{
-		const auto &&obj_light_emission = compute_light_emission(obj);
+		const auto &&obj_light_emission = compute_light_emission(Vclip, obj);
 
 		if (((obj_light_emission.r+obj_light_emission.g+obj_light_emission.b)/3) > 0)
 			apply_light(vmsegptridx, obj_light_emission, vmsegptridx(obj->segnum), obj->pos, n_render_vertices, render_vertices, vert_segnum_list, obj);
@@ -576,9 +584,9 @@ static fix compute_headlight_light_on_object(const object_base &objp)
 #endif
 
 //compute the average dynamic light in a segment.  Takes the segment number
-static g3s_lrgb compute_seg_dynamic_light(const segment &seg)
+static g3s_lrgb compute_seg_dynamic_light(array<g3s_lrgb, MAX_VERTICES> &Dynamic_light, const shared_segment &seg)
 {
-	auto op = [](g3s_lrgb r, const unsigned v) {
+	const auto &&op = [&Dynamic_light](g3s_lrgb r, const unsigned v) {
 		r.r += Dynamic_light[v].r;
 		r.g += Dynamic_light[v].g;
 		r.b += Dynamic_light[v].b;
@@ -593,14 +601,14 @@ static g3s_lrgb compute_seg_dynamic_light(const segment &seg)
 
 static array<g3s_lrgb, MAX_OBJECTS> object_light;
 static array<object_signature_t, MAX_OBJECTS> object_sig;
-object *old_viewer;
+const object *old_viewer;
 static int reset_lighting_hack;
 #define LIGHT_RATE i2f(4) //how fast the light ramps up
 
-void start_lighting_frame(const vmobjptr_t viewer)
+void start_lighting_frame(const object &viewer)
 {
-	reset_lighting_hack = (viewer != old_viewer);
-	old_viewer = viewer;
+	reset_lighting_hack = (&viewer != old_viewer);
+	old_viewer = &viewer;
 }
 
 //compute the lighting for an object.  Takes a pointer to the object,
@@ -651,7 +659,8 @@ g3s_lrgb compute_object_light(const vcobjptridx_t obj)
 	}
 
 	//Finally, add in dynamic light for this segment
-	const auto &&seg_dl = compute_seg_dynamic_light(objsegp);
+	auto &Dynamic_light = LevelUniqueLightState.Dynamic_light;
+	const auto &&seg_dl = compute_seg_dynamic_light(Dynamic_light, objsegp);
 #if defined(DXX_BUILD_DESCENT_II)
 	//Next, add in (NOTE: WHITE) headlight on this object
 	const fix mlight = compute_headlight_light_on_object(obj);

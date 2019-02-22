@@ -121,6 +121,8 @@ extern powerup_names_array Powerup_names;
 }
 #endif
 
+namespace dcx {
+
 struct powerup_type_info : public prohibit_void_ptr<powerup_type_info>
 {
 	int vclip_num;
@@ -129,31 +131,25 @@ struct powerup_type_info : public prohibit_void_ptr<powerup_type_info>
 	fix light;      // amount of light cast by this powerup, set in bitmaps.tbl
 };
 
-namespace dsx {
-extern array<powerup_type_info, MAX_POWERUP_TYPES> Powerup_info;
-}
-
 void powerup_type_info_read(PHYSFS_File *fp, powerup_type_info &pti);
 void powerup_type_info_write(PHYSFS_File *fp, const powerup_type_info &pti);
 
-namespace dcx {
-
 extern unsigned N_powerup_types;
-void draw_powerup(grs_canvas &, const object_base &obj);
+void draw_powerup(const d_vclip_array &Vclip, grs_canvas &, const object_base &obj);
 
 }
 
 //returns true if powerup consumed
 #ifdef dsx
 namespace dsx {
+using d_powerup_info_array = array<powerup_type_info, MAX_POWERUP_TYPES>;
+extern d_powerup_info_array Powerup_info;
 int do_powerup(vmobjptridx_t obj);
 
+//process (animate) a powerup for one frame
+void do_powerup_frame(const d_vclip_array &Vclip, vmobjptridx_t obj);
 }
 #endif
-namespace dsx {
-//process (animate) a powerup for one frame
-void do_powerup_frame(vmobjptridx_t obj);
-}
 #endif
 
 // Diminish shields and energy towards max in case they exceeded it.

@@ -103,7 +103,7 @@ static void multi_send_heartbeat();
 #if defined(DXX_BUILD_DESCENT_II)
 namespace dsx {
 static std::size_t find_goal_texture(ubyte t);
-static tmap_info &find_required_goal_texture(ubyte t);
+static const tmap_info &find_required_goal_texture(uint8_t t);
 static void multi_do_capture_bonus(const playernum_t pnum);
 static void multi_do_orb_bonus(const playernum_t pnum, const ubyte *buf);
 static void multi_send_drop_flag(vmobjptridx_t objnum,int seed);
@@ -1735,7 +1735,7 @@ static void multi_do_reappear(const playernum_t pnum, const ubyte *buf)
 		return;
 
 	multi_make_ghost_player(pnum);
-	create_player_appearance_effect(obj);
+	create_player_appearance_effect(Vclip, obj);
 }
 
 static void multi_do_player_deres(object_array &objects, const playernum_t pnum, const uint8_t *const buf)
@@ -1830,7 +1830,7 @@ static void multi_do_player_deres(object_array &objects, const playernum_t pnum,
 	}
 	else
 	{
-		create_player_appearance_effect(objp);
+		create_player_appearance_effect(Vclip, objp);
 	}
 
 	player_info.powerup_flags &= ~(PLAYER_FLAGS_CLOAKED | PLAYER_FLAGS_INVULNERABLE);
@@ -1942,7 +1942,7 @@ static void multi_do_escape(fvmobjptridx &vmobjptridx, const uint8_t *const buf)
 	HUD_init_message(HM_MULTI, "%s %s", static_cast<const char *>(plr.callsign), txt);
 	if (Game_mode & GM_NETWORK)
 		plr.connected = connected;
-	create_player_appearance_effect(objnum);
+	create_player_appearance_effect(Vclip, objnum);
 	multi_make_player_ghost(buf[1]);
 }
 
@@ -1966,8 +1966,8 @@ static void multi_do_remobj(fvmobjptr &vmobjptr, const uint8_t *const buf)
 		return;
 	}
 
-	const auto &&obj = vmobjptr(local_objnum);
-	if (obj->type != OBJ_POWERUP && obj->type != OBJ_HOSTAGE)
+	auto &obj = *vmobjptr(local_objnum);
+	if (obj.type != OBJ_POWERUP && obj.type != OBJ_HOSTAGE)
 	{
 		return;
 	}
@@ -1977,7 +1977,7 @@ static void multi_do_remobj(fvmobjptr &vmobjptr, const uint8_t *const buf)
 		Network_send_objnum = -1;
 	}
 
-	obj->flags |= OF_SHOULD_BE_DEAD; // quick and painless
+	obj.flags |= OF_SHOULD_BE_DEAD; // quick and painless
 }
 
 }
@@ -2120,28 +2120,28 @@ static void multi_do_door_open(fvmwallptr &vmwallptr, const uint8_t *const buf)
 	if (!useg)
 		return;
 	const auto &&seg = *useg;
-
-	if (seg->sides[side].wall_num == wall_none) {  //Opening door on illegal wall
+	const auto wall_num = seg->shared_segment::sides[side].wall_num;
+	if (wall_num == wall_none) {  //Opening door on illegal wall
 		Int3();
 		return;
 	}
 
-	const auto &&w = vmwallptr(seg->sides[side].wall_num);
+	auto &w = *vmwallptr(wall_num);
 
-	if (w->type == WALL_BLASTABLE)
+	if (w.type == WALL_BLASTABLE)
 	{
-		if (!(w->flags & WALL_BLASTED))
+		if (!(w.flags & WALL_BLASTED))
 		{
 			wall_destroy(seg, side);
 		}
 		return;
 	}
-	else if (w->state != WALL_DOOR_OPENING)
+	else if (w.state != WALL_DOOR_OPENING)
 	{
 		wall_open_door(seg, side);
 	}
 #if defined(DXX_BUILD_DESCENT_II)
-	w->flags=flag;
+	w.flags = flag;
 #endif
 
 }
@@ -2266,7 +2266,8 @@ static void multi_do_trigger(const playernum_t pnum, const ubyte *buf)
 		Int3(); // Got trigger from illegal playernum
 		return;
 	}
-	if ((trigger < 0) || (trigger >= Num_triggers))
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	if ((trigger < 0) || (trigger >= Triggers.get_count()))
 	{
 		Int3(); // Illegal trigger number in multiplayer
 		return;
@@ -2302,7 +2303,8 @@ static void multi_do_effect_blowup(const playernum_t pnum, const ubyte *buf)
 	laser.parent_type = OBJ_PLAYER;
 	laser.parent_num = pnum;
 
-	check_effect_blowup(*useg, side, hitpnt, laser, 0, 1);
+	auto &LevelSharedDestructibleLightState = LevelSharedSegmentState.DestructibleLights;
+	check_effect_blowup(LevelSharedDestructibleLightState, Vclip, *useg, side, hitpnt, laser, 0, 1);
 }
 
 static void multi_do_drop_marker(object_array &objects, fvmsegptridx &vmsegptridx, const playernum_t pnum, const uint8_t *const buf)
@@ -2324,7 +2326,7 @@ static void multi_do_drop_marker(object_array &objects, fvmsegptridx &vmsegptrid
 
 	auto &mo = MarkerState.imobjidx[mnum];
 	if (mo != object_none)
-		obj_delete(objects.vmptridx(mo));
+		obj_delete(LevelUniqueObjectState, Segments, objects.vmptridx(mo));
 
 	const auto &&plr_objp = objects.vcptr(vcplayerptr(pnum)->objnum);
 	mo = drop_marker_object(position, vmsegptridx(plr_objp->segnum), plr_objp->orient, mnum);
@@ -2333,7 +2335,7 @@ static void multi_do_drop_marker(object_array &objects, fvmsegptridx &vmsegptrid
 }
 #endif
 
-static void multi_do_hostage_door_status(fvmsegptridx &vmsegptridx, fvmwallptr &vmwallptr, const uint8_t *const buf)
+static void multi_do_hostage_door_status(fvmsegptridx &vmsegptridx, wall_array &Walls, const uint8_t *const buf)
 {
 	// Update hit point status of a door
 
@@ -2343,8 +2345,9 @@ static void multi_do_hostage_door_status(fvmsegptridx &vmsegptridx, fvmwallptr &
 	wallnum_t wallnum = GET_INTEL_SHORT(buf + count);     count += 2;
 	hps = GET_INTEL_INT(buf + count);           count += 4;
 
+	auto &vmwallptr = Walls.vmptr;
 	auto &w = *vmwallptr(wallnum);
-	if (wallnum >= Num_walls || hps < 0 || w.type != WALL_BLASTABLE)
+	if (wallnum >= Walls.get_count() || hps < 0 || w.type != WALL_BLASTABLE)
 	{
 		Int3(); // Non-terminal, see Rob
 		return;
@@ -2415,6 +2418,7 @@ static void multi_reset_object_texture(object_base &objp)
 	pobj_info.alt_textures = id;
 	if (id)
 	{
+		auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 		auto &model = Polygon_models[pobj_info.model_num];
 		const unsigned n_textures = model.n_textures;
 		if (N_PLAYER_SHIP_TEXTURES < n_textures)
@@ -3195,7 +3199,7 @@ public:
 	{
 		return m_modified.test(i);
 	}
-	void process_powerup(fvmsegptridx &, const object &, powerup_type_t);
+	void process_powerup(const d_vclip_array &Vclip, fvmsegptridx &, const object &, powerup_type_t);
 };
 
 class powerup_shuffle_state
@@ -3214,7 +3218,7 @@ public:
 	void shuffle() const;
 };
 
-void update_item_state::process_powerup(fvmsegptridx &vmsegptridx, const object &o, const powerup_type_t id)
+void update_item_state::process_powerup(const d_vclip_array &Vclip, fvmsegptridx &vmsegptridx, const object &o, const powerup_type_t id)
 {
 	uint_fast32_t count;
 	switch (id)
@@ -3272,6 +3276,8 @@ void update_item_state::process_powerup(fvmsegptridx &vmsegptridx, const object 
 	const auto vc_num_frames = vc.num_frames;
 	const auto &&segp = vmsegptridx(o.segnum);
 	const auto &seg_verts = segp->verts;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	for (uint_fast32_t i = count++; i; --i)
 	{
 		assert(o.movement_type == MT_NONE);
@@ -3319,7 +3325,7 @@ public:
  * Robot deletion for non-robot games, Powerup duplication, AllowedItems, Initial powerup counting.
  * MUST be done before multi_level_sync() in case we join a running game and get updated objects there. We want the initial powerup setup for a level here!
  */
-void multi_prep_level_objects()
+void multi_prep_level_objects(const d_vclip_array &Vclip)
 {
         if (!(Game_mode & GM_MULTI_COOP))
 	{
@@ -3338,7 +3344,7 @@ void multi_prep_level_objects()
 		if ((o->type == OBJ_HOSTAGE) && !(Game_mode & GM_MULTI_COOP))
 		{
 			const auto objnum = obj_create(OBJ_POWERUP, POW_SHIELD_BOOST, vmsegptridx(o->segnum), o->pos, &vmd_identity_matrix, Powerup_info[POW_SHIELD_BOOST].size, CT_POWERUP, MT_PHYSICS, RT_POWERUP);
-			obj_delete(o);
+			obj_delete(LevelUniqueObjectState, Segments, o);
 			if (objnum != object_none)
 			{
 				objnum->rtype.vclip_info.vclip_num = Powerup_info[POW_SHIELD_BOOST].vclip_num;
@@ -3356,25 +3362,25 @@ void multi_prep_level_objects()
 			switch (const auto id = get_powerup_id(o))
 			{
 				case POW_EXTRA_LIFE:
-					set_powerup_id(o, POW_INVULNERABILITY);
+					set_powerup_id(Powerup_info, Vclip, o, POW_INVULNERABILITY);
 					/* fall through */
 				case POW_INVULNERABILITY:
 					if (inv_remaining)
 						-- inv_remaining;
 					else
-						set_powerup_id(o, POW_SHIELD_BOOST);
+						set_powerup_id(Powerup_info, Vclip, o, POW_SHIELD_BOOST);
 					continue;
 				case POW_CLOAK:
 					if (cloak_remaining)
 						-- cloak_remaining;
 					else
-						set_powerup_id(o, POW_SHIELD_BOOST);
+						set_powerup_id(Powerup_info, Vclip, o, POW_SHIELD_BOOST);
 					continue;
 				default:
 					if (!multi_powerup_is_allowed(id, AllowedItems, SpawnGrantedItems))
-						bash_to_shield(o);
+						bash_to_shield(Powerup_info, Vclip, o);
 					else
-						duplicates.process_powerup(vmsegptridx, o, id);
+						duplicates.process_powerup(Vclip, vmsegptridx, o, id);
 					continue;
 			}
 		}
@@ -3430,7 +3436,7 @@ void multi_prep_level_player(void)
 
 #if defined(DXX_BUILD_DESCENT_II)
 	if (game_mode_hoard())
-		init_hoard_data();
+		init_hoard_data(Vclip);
 
 	if (game_mode_capture_flag() || game_mode_hoard())
 		multi_apply_goal_textures();
@@ -3469,11 +3475,12 @@ window_event_result multi_level_sync(void)
 namespace dsx {
 
 #if defined(DXX_BUILD_DESCENT_II)
-static void apply_segment_goal_texture(const vmsegptr_t seg, const std::size_t tex)
+static void apply_segment_goal_texture(unique_segment &seg, const std::size_t tex)
 {
-	seg->static_light = i2f(100);	//make static light bright
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+	seg.static_light = i2f(100);	//make static light bright
 	if (tex < TmapInfo.size())
-		range_for (auto &s, seg->sides)
+		range_for (auto &s, seg.sides)
 		{
 			s.tmap_num = tex;
 			range_for (auto &uvl, s.uvls)
@@ -3511,12 +3518,14 @@ void multi_apply_goal_textures()
 
 std::size_t find_goal_texture (ubyte t)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	const auto &&r = partial_const_range(TmapInfo, NumTextures);
 	return std::distance(r.begin(), std::find_if(r.begin(), r.end(), [t](const tmap_info &i) { return (i.flags & t); }));
 }
 
-tmap_info &find_required_goal_texture(ubyte t)
+const tmap_info &find_required_goal_texture(const uint8_t t)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	std::size_t r = find_goal_texture(t);
 	if (r < TmapInfo.size())
 		return TmapInfo[r];
@@ -3674,7 +3683,7 @@ void multi_update_objects_for_non_cooperative()
 				if (objp->contains_count && (objp->contains_type == OBJ_POWERUP))
 					object_create_robot_egg(objp);
 #endif
-			obj_delete(objp);
+			obj_delete(LevelUniqueObjectState, Segments, objp);
 		}
 	}
 	powerup_shuffle.shuffle();
@@ -3750,7 +3759,7 @@ static void multi_do_drop_weapon(fvmobjptr &vmobjptr, const playernum_t pnum, co
 	remote_objnum = GET_INTEL_SHORT(buf + 2);
 	ammo = GET_INTEL_SHORT(buf + 4);
 	seed = GET_INTEL_INT(buf + 6);
-	const auto objnum = spit_powerup(vmobjptr(vcplayerptr(pnum)->objnum), powerup_id, seed);
+	const auto objnum = spit_powerup(Vclip, vmobjptr(vcplayerptr(pnum)->objnum), powerup_id, seed);
 
 	map_objnum_local_to_remote(objnum, remote_objnum, pnum);
 
@@ -3815,7 +3824,7 @@ static void multi_do_vulcan_weapon_ammo_adjust(fvmobjptr &vmobjptr, const uint8_
 		obj->ctype.powerup_info.count = ammo;
 }
 
-void multi_send_guided_info (const vmobjptr_t miss,char done)
+void multi_send_guided_info(const object_base &miss, const char done)
 {
 	int count=0;
 
@@ -3827,7 +3836,7 @@ void multi_send_guided_info (const vmobjptr_t miss,char done)
 	if (words_bigendian)
 	{
 		shortpos sp;
-		create_shortpos_little(&sp, miss);
+		create_shortpos_little(LevelSharedSegmentState, sp, miss);
 		memcpy(&multibuf[count], sp.bytemat, 9);
 	count += 9;
 		memcpy(&multibuf[count], &sp.xo, 14);
@@ -3835,28 +3844,26 @@ void multi_send_guided_info (const vmobjptr_t miss,char done)
 	}
 	else
 	{
-		create_shortpos_little(reinterpret_cast<shortpos *>(&multibuf[count]), miss);
+		create_shortpos_little(LevelSharedSegmentState, *reinterpret_cast<shortpos *>(&multibuf[count]), miss);
 		count += sizeof(shortpos);
 	}
 	multi_send_data(multibuf, 0);
 }
 
-static void multi_do_guided(fvmobjptridx &vmobjptridx, const playernum_t pnum, const uint8_t *const buf)
+static void multi_do_guided(d_level_unique_object_state &LevelUniqueObjectState, const playernum_t pnum, const uint8_t *const buf)
 {
 	int count=3;
 
-	if (Guided_missile[static_cast<int>(pnum)]==NULL)
-	{
-		return;
-	}
-
 	if (buf[2])
 	{
-		release_guided_missile(pnum);
+		release_guided_missile(LevelUniqueObjectState, pnum);
 		return;
 	}
 
-	const auto &&guided_missile = vmobjptridx(Guided_missile[pnum]);
+	const auto &&gimobj = LevelUniqueObjectState.Guided_missile.get_player_active_guided_missile(LevelUniqueObjectState.get_objects().vmptridx, pnum);
+	if (gimobj == nullptr)
+		return;
+	const vmobjptridx_t guided_missile = gimobj;
 	if (words_bigendian)
 	{
 		shortpos sp;
@@ -3870,7 +3877,7 @@ static void multi_do_guided(fvmobjptridx &vmobjptridx, const playernum_t pnum, c
 	}
 
 	count+=sizeof (shortpos);
-	update_object_seg(guided_missile);
+	update_object_seg(vmobjptr, LevelSharedSegmentState, LevelUniqueSegmentState, guided_missile);
 }
 
 void multi_send_stolen_items ()
@@ -4014,10 +4021,11 @@ void multi_check_for_killgoal_winner ()
 		}
 	}
 	if (!bestplr)
+	{
 		/* No player has at least one kill */
-		return;
-
-	if (bestplr == &local_player)
+		HUD_init_message_literal(HM_MULTI, "No one has scored any kills!");
+	}
+	else if (bestplr == &local_player)
 	{
 		HUD_init_message(HM_MULTI, "You have the best score at %d kills!", highest_kill_goal_count);
 	}
@@ -4060,7 +4068,7 @@ void multi_send_light_specific (const playernum_t pnum, const vcsegptridx_t segn
 	count += sizeof(uint16_t);
 	multibuf[count] = val; count++;
 
-	range_for (auto &i, segnum->sides)
+	range_for (auto &i, segnum->unique_segment::sides)
 	{
 		PUT_INTEL_SHORT(&multibuf[count], i.tmap_num2); count+=2;
 	}
@@ -4077,12 +4085,13 @@ static void multi_do_light (const ubyte *buf)
 	if (!usegp)
 		return;
 	const auto &&segp = *usegp;
-	auto &side_array = segp->sides;
+	auto &side_array = segp->unique_segment::sides;
 	for (i=0;i<6;i++)
 	{
 		if ((sides & (1<<i)))
 		{
-			subtract_light(segp, i);
+			auto &LevelSharedDestructibleLightState = LevelSharedSegmentState.DestructibleLights;
+			subtract_light(LevelSharedDestructibleLightState, segp, i);
 			side_array[i].tmap_num2 = GET_INTEL_SHORT(&buf[4 + (2 * i)]);
 		}
 	}
@@ -4375,7 +4384,7 @@ static void DropOrb ()
 
 	seed = d_rand();
 
-	const auto &&objnum = spit_powerup(vmobjptr(ConsoleObject), POW_HOARD_ORB, seed);
+	const auto &&objnum = spit_powerup(Vclip, vmobjptr(ConsoleObject), POW_HOARD_ORB, seed);
 
 	if (objnum == object_none)
 		return;
@@ -4413,7 +4422,7 @@ void DropFlag ()
 		return;
 	}
 	seed = d_rand();
-	const auto &&objnum = spit_powerup(vmobjptr(ConsoleObject), get_team(Player_num) == TEAM_RED ? POW_FLAG_BLUE : POW_FLAG_RED, seed);
+	const auto &&objnum = spit_powerup(Vclip, vmobjptr(ConsoleObject), get_team(Player_num) == TEAM_RED ? POW_FLAG_BLUE : POW_FLAG_RED, seed);
 	if (objnum == object_none)
 	{
 		HUD_init_message_literal(HM_MULTI, "Failed to drop flag!");
@@ -4455,7 +4464,7 @@ static void multi_do_drop_flag (const playernum_t pnum, const ubyte *buf)
 
 	const auto &&objp = vmobjptr(vcplayerptr(pnum)->objnum);
 
-	auto objnum = spit_powerup(objp, powerup_id, seed);
+	auto objnum = spit_powerup(Vclip, objp, powerup_id, seed);
 
 	map_objnum_local_to_remote(objnum, remote_objnum, pnum);
 	if (!game_mode_hoard())
@@ -4587,6 +4596,8 @@ void multi_send_trigger_specific(const playernum_t pnum, const uint8_t trig)
 
 static void multi_do_start_trigger(const uint8_t *const buf)
 {
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vmtrgptr = Triggers.vmptr;
 	vmtrgptr(static_cast<trgnum_t>(buf[1]))->flags |= TF_DISABLED;
 }
 #endif
@@ -4962,8 +4973,15 @@ void multi_restore_game(ubyte slot, uint id)
 		nm_messagebox(NULL, 1, TXT_OK, "A multi-save game was restored\nthat you are missing or does not\nmatch that of the others.\nYou must rejoin if you wish to\ncontinue.");
 		return;
 	}
-  
-	state_restore_all_sub(filename, secret_restore::none);
+
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &LevelSharedDestructibleLightState = LevelSharedSegmentState.DestructibleLights;
+#endif
+	state_restore_all_sub(
+#if defined(DXX_BUILD_DESCENT_II)
+		LevelSharedDestructibleLightState, secret_restore::none,
+#endif
+		filename);
 	multi_send_score(); // send my restored scores. I sent 0 when I loaded the level anyways...
 }
 
@@ -5354,13 +5372,9 @@ class hoard_resources_type
 	static constexpr auto invalid_bm_idx = std::integral_constant<int, -1>{};
 	static constexpr auto invalid_snd_idx = std::integral_constant<unsigned, ~0u>{};
 public:
-	int bm_idx;
-	unsigned snd_idx;
+	int bm_idx = invalid_bm_idx;
+	unsigned snd_idx = invalid_snd_idx;
 	void reset();
-	constexpr hoard_resources_type() :
-		bm_idx(invalid_bm_idx), snd_idx(invalid_snd_idx)
-	{
-	}
 	~hoard_resources_type()
 	{
 		reset();
@@ -5401,7 +5415,7 @@ void hoard_resources_type::reset()
 		i.reset();
 }
 
-void init_hoard_data()
+void init_hoard_data(d_vclip_array &Vclip)
 {
 	hoard_resources.reset();
 	static int orb_vclip;
@@ -5412,6 +5426,7 @@ void init_hoard_data()
 	uint8_t *bitmap_data1;
 	int save_pos;
 	int bitmap_num = hoard_resources.bm_idx = Num_bitmap_files;
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 
 	auto ifile = PHYSFSX_openReadBuffered("hoard.ham");
 	if (!ifile)
@@ -5430,7 +5445,7 @@ void init_hoard_data()
 
 	//Create orb vclip
 	orb_vclip = Num_vclips++;
-	Assert(Num_vclips <= VCLIP_MAXNUM);
+	assert(Num_vclips <= Vclip.size());
 	Vclip[orb_vclip].play_time = F1_0/2;
 	Vclip[orb_vclip].num_frames = n_orb_frames;
 	Vclip[orb_vclip].frame_time = Vclip[orb_vclip].play_time / Vclip[orb_vclip].num_frames;
@@ -5596,6 +5611,8 @@ static void multi_process_data(const playernum_t pnum, const ubyte *buf, const u
 {
 	// Take an entire message (that has already been checked for validity,
 	// if necessary) and act on it.
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vmwallptr = Walls.vmptr;
 	switch(type)
 	{
 		case MULTI_POSITION:
@@ -5636,7 +5653,7 @@ static void multi_process_data(const playernum_t pnum, const ubyte *buf, const u
 		case MULTI_DROP_FLAG:
 			multi_do_drop_flag(pnum, buf); break;
 		case MULTI_GUIDED:
-			multi_do_guided (vmobjptridx, pnum, buf);
+			multi_do_guided(LevelUniqueObjectState, pnum, buf);
 			break;
 		case MULTI_STOLEN_ITEMS:
 			multi_do_stolen_items(buf); break;
@@ -5698,7 +5715,7 @@ static void multi_process_data(const playernum_t pnum, const ubyte *buf, const u
 			multi_do_score(vmobjptr, pnum, buf);
 			break;
 		case MULTI_CREATE_ROBOT:
-			multi_do_create_robot(pnum, buf); break;
+			multi_do_create_robot(Vclip, pnum, buf); break;
 		case MULTI_TRIGGER:
 			multi_do_trigger(pnum, buf); break;
 #if defined(DXX_BUILD_DESCENT_II)
@@ -5714,7 +5731,7 @@ static void multi_process_data(const playernum_t pnum, const ubyte *buf, const u
 			break;
 #endif
 		case MULTI_BOSS_TELEPORT:
-			multi_do_boss_teleport(pnum, buf); break;
+			multi_do_boss_teleport(Vclip, pnum, buf); break;
 		case MULTI_BOSS_CLOAK:
 			multi_do_boss_cloak(buf); break;
 		case MULTI_BOSS_START_GATE:
@@ -5726,7 +5743,7 @@ static void multi_process_data(const playernum_t pnum, const ubyte *buf, const u
 		case MULTI_CREATE_ROBOT_POWERUPS:
 			multi_do_create_robot_powerups(pnum, buf); break;
 		case MULTI_HOSTAGE_DOOR:
-			multi_do_hostage_door_status(vmsegptridx, vmwallptr, buf);
+			multi_do_hostage_door_status(vmsegptridx, Walls, buf);
 			break;
 		case MULTI_SAVE_GAME:
 			multi_do_save_game(buf); break;

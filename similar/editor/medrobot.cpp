@@ -108,12 +108,13 @@ static void call_init_ai_object(vmobjptridx_t objp, ai_behavior behavior)
 //-------------------------------------------------------------------------
 static int RobotNextType()
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if (Cur_object_index != object_none )	{
 		const auto &&obj = vmobjptridx(Cur_object_index);
 		if (obj->type == OBJ_ROBOT)
 		{
 			obj->id++;
-			if (obj->id >= N_robot_types )
+			if (obj->id >= LevelSharedRobotInfoState.N_robot_types)
 				obj->id = 0;
 
 			//Set polygon-object-specific data
@@ -137,12 +138,13 @@ static int RobotNextType()
 //-------------------------------------------------------------------------
 static int RobotPrevType()
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	if (Cur_object_index != object_none )	{
 		const auto &&obj = vmobjptridx(Cur_object_index);
 		if (obj->type == OBJ_ROBOT)
 		{
 			if (obj->id == 0 ) 
-				obj->id = N_robot_types-1;
+				obj->id = LevelSharedRobotInfoState.N_robot_types - 1;
 			else
 				obj->id--;
 
@@ -199,12 +201,12 @@ int		Cur_goody_count = 0;
 static void update_goody_info(void)
 {
 	if (Cur_object_index != object_none )	{
-		const auto &&obj = vmobjptr(Cur_object_index);
-		if (obj->type == OBJ_ROBOT)
+		auto &obj = *vmobjptr(Cur_object_index);
+		if (obj.type == OBJ_ROBOT)
 		{
-			obj->contains_type = Cur_goody_type;
-			obj->contains_id = Cur_goody_id;
-			obj->contains_count = Cur_goody_count;
+			obj.contains_type = Cur_goody_type;
+			obj.contains_id = Cur_goody_id;
+			obj.contains_count = Cur_goody_count;
 		}
 	}
 }
@@ -261,7 +263,7 @@ int GoodyNextID()
 {
 	Cur_goody_id++;
 	if (Cur_goody_type == OBJ_ROBOT) {
-		if (Cur_goody_id >= N_robot_types)
+		if (Cur_goody_id >= LevelSharedRobotInfoState.N_robot_types)
 			Cur_goody_id=0;
 	} else {
 		if (Cur_goody_id >= N_powerup_types)
@@ -277,7 +279,7 @@ int GoodyPrevID()
 	Cur_goody_id--;
 	if (Cur_goody_type == OBJ_ROBOT) {
 		if (Cur_goody_id < 0)
-			Cur_goody_id = N_robot_types-1;
+			Cur_goody_id = LevelSharedRobotInfoState.N_robot_types - 1;
 	} else {
 		if (Cur_goody_id < 0)
 			Cur_goody_id = N_powerup_types-1;
@@ -343,7 +345,11 @@ static int LocalObjectSelectNextinSegment(void)
 	}
 
 	if (Cur_object_index != first_obj)
-		set_view_target_from_segment(Cursegp);
+	{
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
+		set_view_target_from_segment(vcvertptr, Cursegp);
+	}
 
 	return rval;
 }
@@ -372,7 +378,11 @@ static int LocalObjectSelectNextinMine(void)
 	}
 
 	if (Cur_object_index != first_obj)
-		set_view_target_from_segment(Cursegp);
+	{
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
+		set_view_target_from_segment(vcvertptr, Cursegp);
+	}
 
 	return rval;
 }
@@ -401,7 +411,11 @@ static int LocalObjectSelectPrevinMine(void)
 	}
 
 	if (Cur_object_index != first_obj)
-		set_view_target_from_segment(Cursegp);
+	{
+		auto &Vertices = LevelSharedVertexState.get_vertices();
+		auto &vcvertptr = Vertices.vcptr;
+		set_view_target_from_segment(vcvertptr, Cursegp);
+	}
 
 	return rval;
 }
@@ -413,13 +427,15 @@ static int LocalObjectDelete(void)
 	rval = ObjectDelete();
 
 	if (Cur_object_index != object_none) {
-		const auto &&objp = vcobjptr(Cur_object_index);
-		Cur_goody_type = objp->contains_type;
-		Cur_goody_id = objp->contains_id;
-		Cur_goody_count = objp->contains_count;
+		auto &objp = *vcobjptr(Cur_object_index);
+		Cur_goody_type = objp.contains_type;
+		Cur_goody_id = objp.contains_id;
+		Cur_goody_count = objp.contains_count;
 	}
 
-	set_view_target_from_segment(Cursegp);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	set_view_target_from_segment(vcvertptr, Cursegp);
 
 	return rval;
 }
@@ -434,7 +450,7 @@ static int LocalObjectPlaceObject(void)
 	{
 		Cur_object_type = OBJ_ROBOT;
 		Cur_object_id = 3;	// class 1 drone
-		Num_object_subtypes = N_robot_types;
+		Num_object_subtypes = LevelSharedRobotInfoState.N_robot_types;
 	}
 
 	rval = ObjectPlaceObject();
@@ -446,7 +462,9 @@ static int LocalObjectPlaceObject(void)
 	objp->contains_id = Cur_goody_id;
 	objp->contains_count = Cur_goody_count;
 
-	set_view_target_from_segment(Cursegp);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	set_view_target_from_segment(vcvertptr, Cursegp);
 
 	return rval;
 }

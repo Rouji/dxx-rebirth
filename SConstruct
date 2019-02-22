@@ -117,6 +117,7 @@ class ToolchainInformation(StaticSubprocess):
 			'LINKFLAGS',
 		) + (
 			(
+				'RC',
 				'RCFLAGS',
 			) if user_settings.host_platform == 'win32' else ()
 		):
@@ -195,10 +196,10 @@ class Git(StaticSubprocess):
 		if g.returncode:
 			return None
 		_pcall = cls.pcall
-		return (g.out.split('\n')[0] +	\
-			('*' if _pcall(['diff', '--quiet']).returncode else '') +	\
-			('+' if _pcall(['diff', '--quiet', '--cached']).returncode else '')
-		)
+		return (g.out.splitlines()[0] +	\
+			(b'*' if _pcall(['diff', '--quiet']).returncode else b'') +	\
+			(b'+' if _pcall(['diff', '--quiet', '--cached']).returncode else b'')
+		).decode()
 
 class _ConfigureTests:
 	class Collector(object):
@@ -759,49 +760,45 @@ help:assume C++ compiler works
 	implicit_tests.append(_implicit_test.RecordedTest('check_cxx14', "assume C++ compiler supports C++14"))
 	__cxx_conformance_CXXFLAGS = [None]
 	def _check_cxx_conformance_level(self,context,_levels=(
-			# List standards in descending order of preference
+			# List standards in descending order of preference.
+			#
+			# Currently, no C++17 features are both useful and easy to
+			# emulate in supported older compilers, so C++17 is not
+			# requested.
+			#
+			# C++14 is required, so list it last.
 			_cxx_conformance_cxx14,
-			# C++11 is required, so list it last.  Omit the comma as a
-			# reminder not to append elements to the list.
-			_cxx_conformance_cxx11
 		), _CXXFLAGS=__cxx_conformance_CXXFLAGS,
 		_successflags={'CXXFLAGS' : __cxx_conformance_CXXFLAGS}
 		):
 		# Testing the compiler option parser only needs Compile, even when LTO
 		# is enabled.
 		Compile = self._Compile
-		# GCC started with -std=gnu++0x for C++0x (later C++11).  In gcc-4.7,
-		# GCC began accepting -std=gnu++11.  Since gcc-4.6 does not accept
-		# some constructs used in the code, use the newer name here.
-		#
 		# Accepted options by version:
 		#
-		#	gcc-4.6 -std=gnu++0x
-		#
-		#	gcc-4.7 -std=gnu++0x
-		#	gcc-4.7 -std=gnu++11
-		#
-		#	gcc-4.8 -std=gnu++0x
-		#	gcc-4.8 -std=gnu++11
-		#	gcc-4.8 -std=gnu++1y
-		#
-		#	gcc-4.9 -std=gnu++0x
-		#	gcc-4.9 -std=gnu++11
 		#	gcc-4.9 -std=gnu++1y
 		#	gcc-4.9 -std=gnu++14
 		#
-		#	gcc-5 -std=gnu++0x
-		#	gcc-5 -std=gnu++11
 		#	gcc-5 -std=gnu++1y
 		#	gcc-5 -std=gnu++14
 		#	gcc-5 -std=gnu++1z
 		#	gcc-5 -std=gnu++17
 		#
-		# In all supported cases except gcc-4.8, gcc accepts the number-only
-		# form if it accepts the approximated form.  The only C++14 feature of
-		# interest in gcc-4.8 is return type deduction, which cannot be used
-		# until gcc-4.7 is retired.  Therefore, it is acceptable for this
-		# check not to detect C++14 support in gcc-4.8.
+		#	gcc-6 -std=gnu++1y
+		#	gcc-6 -std=gnu++14
+		#	gcc-6 -std=gnu++1z
+		#	gcc-6 -std=gnu++17
+		#
+		#	gcc-7 -std=gnu++1y
+		#	gcc-7 -std=gnu++14
+		#	gcc-7 -std=gnu++1z
+		#	gcc-7 -std=gnu++17
+		#
+		#	gcc-8 -std=gnu++1y
+		#	gcc-8 -std=gnu++14
+		#	gcc-8 -std=gnu++1z
+		#	gcc-8 -std=gnu++17
+		#	gcc-8 -std=gnu++2a
 		for level in _levels:
 			opt = '-std=gnu++%u' % level
 			_CXXFLAGS[0] = opt
@@ -829,20 +826,26 @@ help:assume C++ compiler works
 		# take an action determined by the value of forced.
 		if forced is None:
 			r = action('''
-#undef main	/* avoid -Dmain=SDL_main from libSDL */
-%s
-%s
-%s
+{tools}
+{macros}
+{text}
 
-%s
-''' % (self.__tool_versions, self.__defined_macros, text, '' if main is None else
+{undef_SDL_main}
+
+{main}
+'''.format(
+	tools=self.__tool_versions,
+	macros=self.__defined_macros,
+	text=text,
+	undef_SDL_main='' if self.user_settings.sdl2 else '#undef main	/* avoid -Dmain=SDL_main from libSDL */',
+	main=('' if main is None else
 '''
 int main(int argc,char**argv){(void)argc;(void)argv;
 %s
 
 ;}
 ''' % main
-	), ext)
+	)), ext)
 			# Some tests check that the compiler rejects an input.
 			# SConf considers the result a failure when the compiler
 			# rejects the input.  For tests that consider a rejection to
@@ -1032,9 +1035,11 @@ int main(int argc,char**argv){(void)argc;(void)argv;
 				endian = 1
 		context.Result('%s: checking endian to use...%s' % (self.msgprefix, __endian_names[endian]))
 		self._define_macro(context, 'DXX_WORDS_BIGENDIAN', endian)
+
 	@_custom_test
 	def _check_user_settings_words_need_alignment(self,context):
 		self._result_check_user_setting(context, self.user_settings.words_need_alignment, 'DXX_WORDS_NEED_ALIGNMENT', 'word alignment fixups')
+
 	@_custom_test
 	def _check_user_settings_opengl(self,context):
 		user_settings = self.user_settings
@@ -1049,27 +1054,34 @@ int main(int argc,char**argv){(void)argc;(void)argv;
 		else:
 			s = 'software renderer'
 		Result('%s: building with %s' % (self.msgprefix, s))
+
 	def _result_check_user_setting(self,context,condition,CPPDEFINES,label,int=int,str=str):
 		if isinstance(CPPDEFINES, str):
 			self._define_macro(context, CPPDEFINES, int(condition))
 		elif condition:
 			self.successful_flags['CPPDEFINES'].extend(CPPDEFINES)
 		context.Result('%s: checking whether to enable %s...%s' % (self.msgprefix, label, 'yes' if condition else 'no'))
+
 	@_custom_test
 	def _check_user_settings_debug(self,context,_CPPDEFINES=(('NDEBUG',), ('RELEASE',))):
 		self._result_check_user_setting(context, not self.user_settings.debug, _CPPDEFINES, 'release options')
+
 	@_custom_test
 	def _check_user_settings_memdebug(self,context,_CPPDEFINES=(('DEBUG_MEMORY_ALLOCATIONS',),)):
 		self._result_check_user_setting(context, self.user_settings.memdebug, _CPPDEFINES, 'memory allocation tracking')
+
 	@_custom_test
 	def _check_user_settings_editor(self,context,_CPPDEFINES='DXX_USE_EDITOR'):
 		self._result_check_user_setting(context, self.user_settings.editor, _CPPDEFINES, 'level editor')
+
 	@_custom_test
 	def _check_user_settings_ipv6(self,context,_CPPDEFINES='DXX_USE_IPv6'):
 		self._result_check_user_setting(context, self.user_settings.ipv6, _CPPDEFINES, 'IPv6 support')
+
 	@_custom_test
 	def _check_user_settings_udp(self,context,_CPPDEFINES='DXX_USE_UDP'):
 		self._result_check_user_setting(context, self.user_settings.use_udp, _CPPDEFINES, 'multiplayer over UDP')
+
 	@_custom_test
 	def _check_user_settings_tracker(self,context,_CPPDEFINES='DXX_USE_TRACKER'):
 		use_tracker = self.user_settings.use_tracker
@@ -1137,6 +1149,20 @@ struct d_screenshot
 '''):
 		successflags = self.pkgconfig.merge(context, self.msgprefix, self.user_settings, 'libpng', 'libpng', _guess_flags)
 		return self._soft_check_system_library(context, header=_header, main=_main, lib='png', text=_text, successflags=successflags)
+
+	@_custom_test
+	def _check_user_settings_adldmidi(self,context):
+		user_settings = self.user_settings
+		adlmidi = user_settings.adlmidi
+		if adlmidi == 'none':
+			adlmidi_load_type = 'disabled'
+		elif adlmidi == 'runtime':
+			adlmidi_load_type = 'load dynamically'
+		else:
+			return
+		context.Result('%s: checking how to handle ADL MIDI...%s' % (self.msgprefix, adlmidi_load_type))
+		Define = context.sconf.Define
+		Define('DXX_USE_ADLMIDI', int(user_settings._enable_adlmidi()))
 
 	@_custom_test
 	def _check_user_settings_screenshot(self,context):
@@ -1258,7 +1284,8 @@ static void terminate_handler()
 		main = '''
 	PHYSFS_File *f;
 	char b[1] = {0};
-	PHYSFS_init("");
+	if (!PHYSFS_init(""))
+		return 1;
 	f = PHYSFS_openWrite("a");
 	PHYSFS_sint64 w = PHYSFS_write(f, b, 1, 1);
 	(void)w;
@@ -1298,6 +1325,8 @@ static void terminate_handler()
 	def check_libSDL2(self,context,_guess_flags={
 			'LIBS' : ['SDL2'] if sys.platform != 'darwin' else [],
 		}):
+		if not self.user_settings.opengl:
+			raise SCons.Errors.StopError('Rebirth does not support SDL2 without OpenGL.  Set opengl=1 or sdl2=0.')
 		self._check_libSDL(context, '2', _guess_flags)
 	def _check_libSDL(self,context,sdl2,guess_flags):
 		user_settings = self.user_settings
@@ -1319,6 +1348,7 @@ static void terminate_handler()
 			('DXX_MAX_AXES_PER_JOYSTICK', user_settings.max_axes_per_joystick),
 			('DXX_MAX_BUTTONS_PER_JOYSTICK', user_settings.max_buttons_per_joystick),
 			('DXX_MAX_HATS_PER_JOYSTICK', user_settings.max_hats_per_joystick),
+			('DXX_USE_SDL_REDBOOK_AUDIO', int(not sdl2)),
 		))
 		context.Display('%s: checking whether to enable joystick support...%s\n' % (self.msgprefix, 'yes' if user_settings.max_joysticks else 'no'))
 		# SDL2 removed CD-rom support.
@@ -1332,12 +1362,15 @@ static void terminate_handler()
 		main = '''
 	SDL_RWops *ops = reinterpret_cast<SDL_RWops *>(argv);
 #if DXX_MAX_JOYSTICKS
+#ifdef SDL_JOYSTICK_DISABLED
+#error "Rebirth configured with joystick support enabled, but SDL{sdl2} configured with joystick support disabled.  Disable Rebirth joystick support or install an SDL{sdl2} with joystick support enabled."
+#endif
 #define DXX_SDL_INIT_JOYSTICK	SDL_INIT_JOYSTICK |
 #else
 #define DXX_SDL_INIT_JOYSTICK
 #endif
-	SDL_Init(DXX_SDL_INIT_JOYSTICK %s | SDL_INIT_VIDEO | SDL_INIT_AUDIO);
-%s
+	SDL_Init(DXX_SDL_INIT_JOYSTICK {init_cdrom} | SDL_INIT_VIDEO | SDL_INIT_AUDIO);
+{test_opengl}
 #if DXX_MAX_JOYSTICKS
 	auto n = SDL_NumJoysticks();
 	(void)n;
@@ -1346,15 +1379,13 @@ static void terminate_handler()
 	SDL_FreeRW(ops);
 	SDL_Quit();
 '''
-		e = self._soft_check_system_library(context,header=['SDL.h'],main=main
-				% (init_cdrom, test_opengl),
+		e = self._soft_check_system_library(context,header=['SDL.h'],main=main.format(init_cdrom=init_cdrom, sdl2=sdl2, test_opengl=test_opengl),
 			lib=('SDL{0} with OpenGL' if test_opengl else 'SDL{0}').format(sdl2), successflags=successflags
 		)
 		if not e:
 			return
 		if test_opengl:
-			e2 = self._soft_check_system_library(context,header=['SDL.h'],main=main
-					% (init_cdrom, ''),
+			e2 = self._soft_check_system_library(context,header=['SDL.h'],main=main.format(init_cdrom=init_cdrom, sdl2=sdl2, test_opengl=''),
 				lib='SDL without OpenGL', successflags=successflags
 			)
 			if not e2 and e[0] == 1:
@@ -1474,6 +1505,7 @@ void a()__attribute__((%s("a called")));
 			macro_value = self.comment_not_supported
 		Define(macro_name, macro_value)
 		self.__defined_macros += '#define %s %s\n' % (macro_name, macro_value)
+
 	@_custom_test
 	def check_builtin_bswap(self,context,
 		_main='''
@@ -1591,6 +1623,7 @@ static int x(int y){
 			self.Compile(context, text=f % '2', main=main, msg='whether compiler accepts __builtin_constant_p')
 			dxx_builtin_constant_p = '((void)(A),0)'
 		Define('dxx_builtin_constant_p(A)', dxx_builtin_constant_p)
+
 	@_custom_test
 	def check_builtin_expect(self,context):
 		"""
@@ -1615,6 +1648,7 @@ return __builtin_expect(argc == 1, 1) ? 1 : 0;
 		Define = context.sconf.Define
 		Define('likely(A)', likely)
 		Define('unlikely(A)', unlikely)
+
 	@_custom_test
 	def check_builtin_file(self,context):
 		if self.Compile(context, text='''
@@ -1623,6 +1657,7 @@ static void f(const char * = __builtin_FILE(), unsigned = __builtin_LINE())
 }
 ''', main='f();', msg='whether compiler accepts __builtin_FILE, __builtin_LINE'):
 			context.sconf.Define('DXX_HAVE_CXX_BUILTIN_FILE_LINE')
+
 	@_custom_test
 	def check_builtin_object_size(self,context):
 		"""
@@ -1655,6 +1690,7 @@ static inline int a(char *c){
 			context.sconf.Define('DXX_HAVE_BUILTIN_OBJECT_SIZE')
 		else:
 			self.Compile(context, text=f % '2', main=main, msg='whether compiler accepts __builtin_object_size')
+
 	@_custom_test
 	def check_embedded_compound_statement(self,context,
 		_compound_statement_native=('', ''),
@@ -1678,6 +1714,7 @@ available.
 		Define = context.sconf.Define
 		Define('DXX_BEGIN_COMPOUND_STATEMENT', t[0])
 		Define('DXX_END_COMPOUND_STATEMENT', t[1])
+
 	@_custom_test
 	def check_compiler_always_error_optimizer(self,context,
 	# Good case: <gcc-6 takes this path.  Declare a function with
@@ -1798,6 +1835,7 @@ help:assume compiler supports __attribute__((always_inline))
 		macro_name = '__attribute_always_inline()'
 		macro_value = '__attribute__((__always_inline__))'
 		self._check_macro(context,macro_name=macro_name,macro_value=macro_value,test='%s static inline void a(){}' % macro_name, main='a();', msg='for function __attribute__((always_inline))')
+
 	@_custom_test
 	def check_attribute_alloc_size(self,context):
 		"""
@@ -1923,6 +1961,7 @@ fail.
 	def __skip_missing_cxx_std(self,level,text,kwargs):
 		if self.__cxx_conformance < level:
 			kwargs.setdefault('skipped', text)
+
 	@_custom_test
 	def check_cxx11_static_assert(self,context,_f='''
 static_assert(%(expr)s, "global");
@@ -2560,57 +2599,24 @@ where the cast is useless.
 	(void)ts;
 	return 0;
 ''', msg='for struct timespec', successflags=_successflags)
-	__preferred_compiler_options = [
+	__preferred_compiler_options = (
 		'-fvisibility=hidden',
+		'-Wduplicated-branches',
+		'-Wduplicated-cond',
 		'-Wsuggest-attribute=noreturn',
 		'-Wlogical-op',
 		'-Wold-style-cast',
-		# Starting in gcc-7, Rebirth default options cause gcc to enable
-		# -Wformat-truncation automatically.  Unless proven otherwise by
-		# data flow analysis, gcc pessimistically assumes that input
-		# parameters might have their most space-consuming value (3
-		# digits for a uint8_t, 5 for uint16_t, etc.).  This causes
-		# numerous warnings for places where Rebirth allocated a buffer
-		# that is exactly big enough for the small numbers that are
-		# actually used, but the data flow analysis is unable to prove
-		# that larger numbers are not used.
-		#
-		# It would be nice to remove this option and eliminate the
-		# warnings with fixes in the code, since this test completely
-		# suppresses all -Wformat-truncation diagnostics, including any
-		# that may be true bugs.  However, gcc provides no documented
-		# way to do this that does not generate extra runtime
-		# instructions, which are unnecessary in at least some of the
-		# cases where gcc warns.
-		#
-		# In testing, setting -Wformat-truncation=1 was insufficient to
-		# silence a warning in similar/main/net_udp.cpp:
-		#
-		#	similar/main/net_udp.cpp: In static member function 'static void {anonymous}::more_game_options_menu_items::net_udp_more_game_options()':
-		#	similar/main/net_udp.cpp:3528:6: error: ' Furthest Sites' directive output may be truncated writing 15 bytes into a region of size between 14 and 16 [-Werror=format-truncation=]
-		#	 void more_game_options_menu_items::net_udp_more_game_options()
-		#	      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
-		#	similar/main/net_udp.cpp:3433:11: note: 'snprintf' output between 21 and 23 bytes into a destination of size 21
-		#	   snprintf(SecludedSpawnText, sizeof(SecludedSpawnText), "Use %u Furthest Sites", Netgame.SecludedSpawns + 1);
-		#	   ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-		#
-		'-Wno-format-truncation',
-		# gcc-7 with -Wextra enables -Wimplicit-fallthrough, which warns
-		# for various sites in Rebirth.  All the sites where fallthrough
-		# is obviously correct are already marked to suppress this
-		# warning, but sites which require analysis are not yet marked.
-		# Suppress this warning for the benefit of users who want a
-		# clean `-Wall -Wextra -Werror` build.  At some point, this
-		# suppression should be removed and the remaining sites fixed.
-		'-Wno-implicit-fallthrough',
-	]
-	__preferred_win32_linker_options = [
+	)
+	__preferred_win32_linker_options = (
 		'-Wl,--large-address-aware',
 		'-Wl,--dynamicbase',
 		'-Wl,--nxcompat',
-	]
+	)
+	# No build directives can modify the process environment, so
+	# modifying this at class scope is safe.  Either every build will
+	# have $SOURCE_DATE_EPOCH set or every build will have it clear.
 	if os.getenv('SOURCE_DATE_EPOCH') is None:
-		__preferred_win32_linker_options += ['-Wl,--insert-timestamp']
+		__preferred_win32_linker_options += ('-Wl,--insert-timestamp',)
 	def __mangle_compiler_option_name(opt):
 		return 'check_compiler_option%s' % opt.replace('-', '_').replace('=', '_')
 	def __mangle_linker_option_name(opt):
@@ -2628,6 +2634,34 @@ where the cast is useless.
 #if defined(__APPLE__) && defined(__MACH__)
 #include <HIServices/Processes.h>
 #endif
+
+/* gcc's warning -Wduplicated-branches was initially overzealous and
+ * warned if the branches were identical after expanding template
+ * parameters.  This was documented in gcc bug #82541, which was fixed
+ * for gcc-8.x.  As of this writing, the fix has not been backported to
+ * gcc-7.x.
+ *
+ * Work around this unwanted quirk by including code which will provoke
+ * a -Wduplicated-branches warning in affected versions, but not in
+ * fixed versions, so that the configure stage blacklists the warning on
+ * affected versions.
+ */
+
+namespace gcc_pr82541 {
+
+template <unsigned U1, unsigned U2>
+unsigned u(bool b)
+{
+	return b ? U1 : U2;
+}
+
+unsigned u2(bool b);
+unsigned u2(bool b)
+{
+	return u<1, 1>(b);
+}
+
+}
 ''',
 		_mangle_compiler_option_name=__mangle_compiler_option_name,
 		_mangle_linker_option_name=__mangle_linker_option_name
@@ -2719,20 +2753,31 @@ class cached_property(object):
 		return r
 
 class LazyObjectConstructor(object):
-	key_transform_env = object()
-	key_transform_object = object()
-	key_transform_target = object()
-	def __get_wrapped_object(s,self,env,StaticObject,__transform_object=key_transform_object):
-		wrapper = s.get(__transform_object, None)
-		if wrapper is None:
-			return StaticObject
-		return wrapper(self, env, StaticObject)
+	class LazyObjectState:
+		def __init__(self,sources,transform_env=None,StaticObject_hook=None,transform_target=None):
+			# `sources` must be non-empty, since it would have no use if
+			# it was empty.
+			#
+			# Every element in `sources` must be a string.  Verify this
+			# with an assertion that directly checks that the sequence
+			# is not empty and indirectly, by way of attribute lookup,
+			# checks that the elements are string-like.
+			assert([s.encode for s in sources]), "sources must be a non-empty list of strings"
+			self.sources = sources
+			self.transform_env = transform_env
+			self.StaticObject_hook = StaticObject_hook
+			# If transform_target is not used, let references to
+			# `self.transform_target` fall through to
+			# `cls.transform_target`.
+			if transform_target:
+				self.transform_target = transform_target
+
+		@staticmethod
+		def transform_target(_, name, _splitext=os.path.splitext):
+			return _splitext(name)[0]
+
 	def __lazy_objects(self,source,
-			cache={},
-			__get_wrapped_object=__get_wrapped_object,
-			__transform_env=key_transform_env,
-			__transform_target=key_transform_target,
-			__strip_extension=lambda _, name, _splitext=os.path.splitext: _splitext(name)[0]
+			cache={}
 		):
 		env = self.env
 		# Use id because name needs to be hashable and have a 1-to-1
@@ -2740,44 +2785,40 @@ class LazyObjectConstructor(object):
 		name = (id(env), id(source))
 		value = cache.get(name)
 		if value is None:
+			prepare_target_name = '{}{}'.format
 			StaticObject = env.StaticObject
 			OBJSUFFIX = env['OBJSUFFIX']
-			builddir = self.user_settings.builddir
+			builddir = self.builddir
+			value = []
+			append = value.append
+			for s in source:
+				transform_target = s.transform_target
+				transform_env = s.transform_env
+				StaticObject_hook = s.StaticObject_hook
+				for srcname in s.sources:
+					target = builddir.File(prepare_target_name(transform_target(self, srcname), OBJSUFFIX))
+					s = StaticObject(target=target, source=srcname,
+							**({} if transform_env is None else transform_env(self, env))
+							)
+					append(s)
+					if StaticObject_hook is not None:
+						StaticObject_hook(self, env, srcname, target, s)
 			# Convert to a tuple so that attempting to modify a cached
 			# result raises an error.
-			value = tuple([
-				wrapped_StaticObject(target='%s%s%s' % (builddir, transform_target(self, srcname), OBJSUFFIX), source=srcname,
-					**({} if transform_env is None else transform_env(self, env))
-				)	\
-				for s in source	\
-				# This is a single iteration comprehension to work
-				# around the inability to assign variables as part of a
-				# normal comprehension.  It iterates over one of two
-				# single element tuples.  The choice of tuple is
-				# controlled by the isinstance check.  Each single
-				# element tuple consists of (F, T, O, L) where F is the
-				# function to bind as `transform_target`, T is the
-				# function to bind as `transform_env` (or None), O is
-				# the function to create the StaticObject, and L
-				# is an iterable to bind as `t`.
-				for transform_target, transform_env, wrapped_StaticObject, t in (	\
-					((__strip_extension, None, StaticObject, (s,)),)	\
-					if isinstance(s, str) \
-					else ((	\
-						s.get(__transform_target, __strip_extension),	\
-						s.get(__transform_env, None),	\
-						__get_wrapped_object(s, self, env, StaticObject),	\
-						s['source'],	\
-					),)	\
-				)	\
-				for srcname in t	\
-			])
+			value = tuple(value)
 			cache[name] = value
 		return value
 
+	def create_lazy_object_states_getter(states,__lazy_objects=__lazy_objects):
+		def get_objects(self):
+			return __lazy_objects(self, states)
+		return get_objects
+
 	@staticmethod
-	def create_lazy_object_getter(sources,__lazy_objects=__lazy_objects):
-		return lambda s, _f=__lazy_objects, _sources=sources: _f(s, _sources)
+	def create_lazy_object_getter(sources,LazyObjectState=LazyObjectState,create_lazy_object_states_getter=create_lazy_object_states_getter):
+		return create_lazy_object_states_getter((LazyObjectState(sources=sources),))
+
+	create_lazy_object_states_getter = staticmethod(create_lazy_object_states_getter)
 
 class FilterHelpText:
 	_sconf_align = None
@@ -2850,13 +2891,13 @@ class PCHManager(object):
 		from tempfile import mkstemp
 		cls._tempfile_mkstemp = staticmethod(mkstemp)
 
-	def __init__(self,user_settings,env,pch_subdir,configure_pch_flags,common_pch_manager):
+	def __init__(self,program,configure_pch_flags,common_pch_manager):
 		if self._re_preproc_match is None:
 			self.__initialize_cls_static_variables()
 			assert self._re_preproc_match is not None
+		self.user_settings = user_settings = program.user_settings
 		assert user_settings.syspch or user_settings.pch
-		self.user_settings = user_settings
-		self.env = env
+		self.env = env = program.env
 		# dict with key=fs.File, value=ScannedFile
 		self._instance_scanned_files = {}
 		self._common_pch_manager = common_pch_manager
@@ -2864,20 +2905,22 @@ class PCHManager(object):
 		syspch_object_node = None
 		CXXFLAGS = env['CXXFLAGS'] + configure_pch_flags['CXXFLAGS']
 		File = env.File
+		builddir = program.builddir
+		pch_subdir_node = builddir.Dir(program.srcdir)
 		if user_settings.syspch:
-			self.syspch_cpp_filename = syspch_cpp_filename = os.path.join(user_settings.builddir, pch_subdir, 'syspch.cpp')
-			self.syspch_cpp_node = File(syspch_cpp_filename)
+			self.syspch_cpp_node = pch_subdir_node.File('syspch.cpp')
+			self.syspch_cpp_filename = syspch_cpp_filename = str(self.syspch_cpp_node)
 			self.required_pch_object_node = self.syspch_object_node = syspch_object_node = env.StaticObject(target='%s.gch' % syspch_cpp_filename, source=self.syspch_cpp_node, CXXCOM=env._dxx_cxxcom_no_ccache_prefix, CXXFLAGS=CXXFLAGS)
 		if user_settings.pch:
-			self.ownpch_cpp_filename = ownpch_cpp_filename = os.path.join(user_settings.builddir, pch_subdir, 'ownpch.cpp')
-			self.ownpch_cpp_node = File(ownpch_cpp_filename)
+			self.ownpch_cpp_node = pch_subdir_node.File('ownpch.cpp')
+			self.ownpch_cpp_filename = ownpch_cpp_filename = str(self.ownpch_cpp_node)
 			if syspch_object_node:
-				CXXFLAGS += ['-include', syspch_cpp_filename, '-Winvalid-pch']
+				CXXFLAGS += ['-include', syspch_cpp_node, '-Winvalid-pch']
 			self.required_pch_object_node = self.ownpch_object_node = ownpch_object_node = env.StaticObject(target='%s.gch' % ownpch_cpp_filename, source=self.ownpch_cpp_node, CXXCOM=env._dxx_cxxcom_no_ccache_prefix, CXXFLAGS=CXXFLAGS)
-			env.Depends(ownpch_object_node, File(os.path.join(user_settings.builddir, 'dxxsconf.h')))
+			env.Depends(ownpch_object_node, builddir.File('dxxsconf.h'))
 			if syspch_object_node:
 				env.Depends(ownpch_object_node, syspch_object_node)
-		self.pch_CXXFLAGS = ['-include', ownpch_cpp_filename or syspch_cpp_filename, '-Winvalid-pch']
+		self.pch_CXXFLAGS = ['-include', self.ownpch_cpp_node or syspch_cpp_node, '-Winvalid-pch']
 		# If assume unchanged and the file exists, set __files_included
 		# to a dummy value.  This bypasses scanning source files and
 		# guarantees that the text of pch.cpp is not changed.  SCons
@@ -3005,13 +3048,14 @@ class PCHManager(object):
 						# Ignore generated header here.  PCH generation
 						# will insert it in the right order.
 						continue
-					if name == b'"valptridx.tcc"':
-						# Exclude tcc file from PCH.  It is not meant to
-						# be included in every file.  Starting in gcc-7,
-						# static functions defined in valptridx.tcc
-						# generate -Wunused-function warnings if the
-						# including file does not instantiate any
-						# templates that use the static function.
+					if not name.endswith(b'.h"'):
+						# Exclude non-header files from PCH.
+						#
+						# Starting in gcc-7, static functions defined in
+						# valptridx.tcc generate -Wunused-function
+						# warnings if the including file does not
+						# instantiate any templates that use the static
+						# function.
 						continue
 					if header_search_path is None:
 						header_search_path = [
@@ -3039,10 +3083,17 @@ class PCHManager(object):
 					name = env.File(name.decode())
 				candidates[name].add(tuple(guard))
 			elif directive == b'endif':
-				# guard should always be True here, but test to avoid
-				# ugly errors if scanning an ill-formed source file.
-				if guard:
-					guard.pop()
+				while guard:
+					g = guard.pop()
+					if g == b'#else':
+						# guard should always be True here, but test to
+						# avoid ugly errors if scanning an ill-formed
+						# source file.
+						if guard:
+							guard.pop()
+						break
+					if not g.startswith(b'#elif '):
+						break
 			elif directive == b'else':
 				# #else is handled separately because it has no
 				# arguments
@@ -3218,7 +3269,8 @@ class PCHManager(object):
 	@classmethod
 	def write_pch_inclusion_file(cls,target,source,env):
 		target = str(target[0])
-		fd, path = cls._tempfile_mkstemp(suffix='', prefix='%s.' % os.path.basename(target), dir=os.path.dirname(target), text=True)
+		dn, bn = os.path.split(target)
+		fd, path = cls._tempfile_mkstemp(suffix='', prefix='%s.' % bn, dir=dn, text=True)
 		# source[0].get_contents() returns the comment-stripped form
 		os.write(fd, source[0].__generated_pch_text)
 		os.close(fd)
@@ -3310,8 +3362,8 @@ class PCHManager(object):
 class DXXCommon(LazyObjectConstructor):
 	# version number
 	VERSION_MAJOR = 0
-	VERSION_MINOR = 59
-	VERSION_MICRO = 100
+	VERSION_MINOR = 61
+	VERSION_MICRO = 0
 	DXX_VERSION_SEQ = ','.join([str(VERSION_MAJOR), str(VERSION_MINOR), str(VERSION_MICRO)])
 	pch_manager = None
 	runtime_test_boost_tests = None
@@ -3424,8 +3476,18 @@ class DXXCommon(LazyObjectConstructor):
 			if self.raspberrypi == 'yes':
 				return 'brcmEGL'
 			return self.default_EGL_LIB
+		def need_dynamic_library_load(self):
+			return self.adlmidi == 'runtime'
+		def _enable_adlmidi(self):
+			return self.adlmidi != 'none'
+
 		def __default_DATA_DIR(self):
-			return '%s/share/games/%s' % (self.prefix, self._program.target)
+			platform_settings_type = self._program.get_platform_settings_type(self.host_platform)
+			sharepath = platform_settings_type.sharepath
+			if sharepath is None:
+				return None
+			return sharepath(prefix=self.prefix, program_target=self._program.target)
+
 		def _generic_variable(key,help,default):
 			return (key, help, default)
 		def __get_configure_tests(tests,_filter=lambda s: s.name[0] != '_'):
@@ -3469,6 +3531,11 @@ class DXXCommon(LazyObjectConstructor):
 			tests = __get_configure_tests(conftests)
 			expect_sconf_tuple = ('0', '1', conftests.expect_sconf_success, conftests.expect_sconf_failure)
 			sconf_tuple = ('0', '1', '2', conftests.sconf_force_failure, conftests.sconf_force_success, conftests.sconf_assume_success)
+			sys_platform = sys.platform
+			if sys_platform.startswith('linux'):
+				sys_platform = 'linux'
+			elif sys_platform.startswith('openbsd'):
+				sys_platform = 'openbsd'
 			return (
 			{
 				'variable': EnumVariable,
@@ -3493,6 +3560,14 @@ class DXXCommon(LazyObjectConstructor):
 			{
 				'variable': EnumVariable,
 				'arguments': (
+					('host_platform',
+						sys_platform,
+						'cross-compile to specified platform',
+						{
+							'map': {'msys':'win32'},
+							'allowed_values' : ('darwin', 'linux', 'openbsd', 'win32'),
+							}
+						),
 					('raspberrypi', None, 'build for Raspberry Pi (automatically selects opengles)', {'ignorecase': 2, 'map': {'1':'yes', 'true':'yes', '0':'no', 'false':'no'}, 'allowed_values': ('yes', 'no', 'mesa')}),
 				),
 			},
@@ -3512,7 +3587,7 @@ class DXXCommon(LazyObjectConstructor):
 					('opengles_lib', self.selected_OGLES_LIB, 'name of the OpenGL ES library to link against'),
 					('egl_lib', self.selected_EGL_LIB, 'name of the OpenGL ES Graphics Library to link against'),
 					('prefix', self._default_prefix, 'installation prefix directory (Linux only)'),
-					('sharepath', self.__default_DATA_DIR, 'directory for shared game data (Linux only)'),
+					('sharepath', self.__default_DATA_DIR, 'directory for shared game data'),
 				),
 			},
 			{
@@ -3538,7 +3613,7 @@ class DXXCommon(LazyObjectConstructor):
 					('opengl', True, 'build with OpenGL support'),
 					('opengles', self.default_opengles, 'build with OpenGL ES support'),
 					('editor', False, 'include editor into build (!EXPERIMENTAL!)'),
-					('sdl2', False, 'use libSDL2+SDL2_mixer (!DEVELOPERS ONLY - KNOWN BROKEN!)'),
+					('sdl2', False, 'use libSDL2+SDL2_mixer (!EXPERIMENTAL!)'),
 					('sdlmixer', True, 'build with SDL_Mixer support for sound and music (includes external music support)'),
 					('ipv6', False, 'enable UDP/IPv6 for multiplayer'),
 					('use_udp', True, 'enable UDP support'),
@@ -3599,7 +3674,7 @@ class DXXCommon(LazyObjectConstructor):
 				'variable': EnumVariable,
 				'arguments': (
 					('host_endian', None, 'endianness of host platform', {'allowed_values' : ('little', 'big')}),
-					('host_platform', sys.platform.rstrip('0123456789'), 'cross-compile to specified platform', {'allowed_values' : ('darwin', 'linux', 'openbsd', 'win32')}),
+					('adlmidi', 'none', 'include ADL MIDI support (none: disabled; runtime: dynamically load at runtime)', {'allowed_values' : ('none', 'runtime')}),
 					('screenshot', 'png', 'screenshot file format', {'allowed_values' : ('none', 'legacy', 'png')}),
 				),
 			},
@@ -3621,11 +3696,14 @@ class DXXCommon(LazyObjectConstructor):
 			},
 		)
 		_generic_variable = staticmethod(_generic_variable)
+
 		@staticmethod
 		def _names(name,prefix):
 			return ['%s%s%s' % (p, '_' if p else '', name) for p in prefix]
+
 		def __init__(self,program=None):
 			self._program = program
+
 		def register_variables(self,prefix,variables,filtered_help):
 			self.known_variables = []
 			append_known_variable = self.known_variables.append
@@ -3731,12 +3809,20 @@ class DXXCommon(LazyObjectConstructor):
 		tools = ('g++', 'gnulink')
 		ogllibs = []
 		platform_objects = ()
+		sharepath = None
+
 		def __init__(self,program,user_settings):
 			self.__program = program
 			self.user_settings = user_settings
+
+		@property
+		def builddir(self):
+			return self.__program.builddir
+
 		@property
 		def env(self):
 			return self.__program.env
+
 	# Settings to apply to mingw32 builds
 	class Win32PlatformSettings(_PlatformSettings):
 		ogllibs = ['opengl32']
@@ -3771,6 +3857,7 @@ class DXXCommon(LazyObjectConstructor):
 				env.Append(FRAMEWORKS = ['OpenGL'])
 	# Settings to apply to Linux builds
 	class LinuxPlatformSettings(_PlatformSettings):
+		sharepath = '{prefix}/share/games/{program_target}'.format
 		@property
 		def ogllibs(self):
 			user_settings = self.user_settings
@@ -3788,11 +3875,11 @@ class DXXCommon(LazyObjectConstructor):
 
 	def create_header_targets(self,__shared_header_file_list=[],__shared_cpp_dict={}):
 		fs = SCons.Node.FS.get_default_fs()
-		builddir = self.user_settings.builddir
 		env = self.env
+		builddir = self.builddir
 		check_header_includes = __shared_cpp_dict.get(builddir)
 		if check_header_includes is None:
-			check_header_includes = env.File(os.path.join(builddir, 'check_header_includes.cpp'))
+			check_header_includes = builddir.File('check_header_includes.cpp')
 			# Generate the list once, on first use.  Any other targets
 			# will reuse it.
 			#
@@ -3867,7 +3954,7 @@ class DXXCommon(LazyObjectConstructor):
 			__shared_header_file_list.extend([h for h in headers.split('\0') if h and not h.startswith(excluded_directories)])
 			if not __shared_header_file_list:
 				raise SCons.Errors.StopError("`git ls-files` found headers, but none can be checked.")
-		dirname = os.path.join(builddir, self.srcdir)
+		subbuilddir = builddir.Dir(self.srcdir, 'chi')
 		Depends = env.Depends
 		StaticObject = env.StaticObject
 		CPPFLAGS_template = env['CPPFLAGS']
@@ -3875,7 +3962,7 @@ class DXXCommon(LazyObjectConstructor):
 		CPPFLAGS_with_sconf = ['-include', 'dxxsconf.h'] + CPPFLAGS_no_sconf
 		CXXCOMSTR = env.__header_check_output_COMSTR
 		CXXFLAGS = env['CXXFLAGS']
-		target = os.path.join('%s/chi/${DXX_EFFECTIVE_SOURCE}%s' % (dirname, env['OBJSUFFIX']))
+		target = os.path.join('%s/${DXX_EFFECTIVE_SOURCE}%s' % (subbuilddir, env['OBJSUFFIX']))
 		for name in __shared_header_file_list:
 			if not name:
 				continue
@@ -3936,7 +4023,7 @@ class DXXCommon(LazyObjectConstructor):
 			self._register_runtime_test_link_targets()
 		configure_pch_flags = archive.configure_pch_flags
 		if configure_pch_flags:
-			self.pch_manager = PCHManager(self.user_settings, self.env, self.srcdir, configure_pch_flags, archive.pch_manager)
+			self.pch_manager = PCHManager(self, configure_pch_flags, archive.pch_manager)
 
 	@staticmethod
 	def _quote_cppdefine(s,f=repr,b2a_hex=binascii.b2a_hex):
@@ -4062,6 +4149,7 @@ class DXXCommon(LazyObjectConstructor):
 		if user_settings.editor:
 			add_flags['CPPPATH'].append('common/include/editor')
 		CLVar = SCons.Util.CLVar
+		self.builddir = env.Dir(user_settings.builddir)
 		for flags in ('CPPFLAGS', 'CXXFLAGS', 'LIBS', 'LINKFLAGS'):
 			value = getattr(self.user_settings, flags)
 			if value is not None:
@@ -4083,15 +4171,19 @@ class DXXCommon(LazyObjectConstructor):
 			machine = None
 		message(self, "compiling on %r/%r for %r into %s%s" % (sys.platform, machine, platform_name, self.user_settings.builddir or '.',
 			(' with prefix list %s' % str(self._argument_prefix_list)) if self._argument_prefix_list else ''))
+		return self.get_platform_settings_type(platform_name)(self, self.user_settings)
+
+	@classmethod
+	def get_platform_settings_type(cls,platform_name):
 		# By happy accident, LinuxPlatformSettings produces the desired
 		# result on OpenBSD, so there is no need for specific handling
 		# of `platform_name == 'openbsd'`.
 		return (
-			self.Win32PlatformSettings if platform_name == 'win32' else (
-				self.DarwinPlatformSettings if platform_name == 'darwin' else
-				self.LinuxPlatformSettings
+			cls.Win32PlatformSettings if platform_name == 'win32' else (
+				cls.DarwinPlatformSettings if platform_name == 'darwin' else
+				cls.LinuxPlatformSettings
 			)
-		)(self, self.user_settings)
+		)
 
 	@cached_property
 	def env(self):
@@ -4100,11 +4192,32 @@ class DXXCommon(LazyObjectConstructor):
 		user_settings = self.user_settings
 		# Get traditional compiler environment variables
 		kw = {}
-		for cc in ('CXX', 'RC'):
+		chost_aware_tools = ('CXX', 'RC')
+		for cc in chost_aware_tools:
 			value = getattr(user_settings, cc)
 			if value is not None:
 				kw[cc] = value
-		env = Environment(ENV = os.environ, tools = platform_settings.tools + ('textfile',), **kw)
+		tools = platform_settings.tools + ('textfile',)
+		env = Environment(ENV = os.environ, tools = tools, **kw)
+		CHOST = user_settings.CHOST
+		if CHOST:
+			denv = None
+			for cc in chost_aware_tools:
+				value = kw.get(cc)
+				if value is not None:
+					# If the user set a value, that value is always
+					# used.
+					continue
+				if denv is None:
+					# Lazy load denv.
+					denv = Environment(tools = tools)
+				# If the option in the base environment, ignoring both
+				# user_settings and the process environment, matches the
+				# option in the customized environment, then assume that
+				# this is an SCons default, not a user-chosen value.
+				value = denv.get(cc)
+				if value and env.get(cc) == value:
+					env[cc] = '{}-{}'.format(CHOST, value)
 		platform_settings.adjust_environment(self, env)
 		return env
 
@@ -4204,13 +4317,19 @@ class DXXArchive(DXXCommon):
 'common/misc/vgrphys.cpp',
 'common/misc/vgwphys.cpp',
 )), \
+		__get_objects_use_adlmidi=DXXCommon.create_lazy_object_getter((
+'common/music/adlmidi_dynamic.cpp',
+)),
 		__get_objects_use_sdl1=DXXCommon.create_lazy_object_getter((
 'common/arch/sdl/rbaudio.cpp',
 ))
 		):
 		value = list(__get_objects_common(self))
 		extend = value.extend
-		if not self.user_settings.sdl2:
+		user_settings = self.user_settings
+		if user_settings._enable_adlmidi():
+			extend(__get_objects_use_adlmidi(self))
+		if not user_settings.sdl2:
 			extend(__get_objects_use_sdl1(self))
 		extend(self.platform_settings.get_platform_objects())
 		return value
@@ -4277,9 +4396,13 @@ class DXXArchive(DXXCommon):
 	def configure_environment(self):
 		fs = SCons.Node.FS.get_default_fs()
 		user_settings = self.user_settings
-		builddir = fs.Dir(user_settings.builddir or '.')
+		builddir = user_settings.builddir or '.'
+		try:
+			builddir = fs.Dir(builddir)
+		except TypeError as e:
+			raise SCons.Errors.StopError(e.args[0])
 		tests = ConfigureTests(self.program_message_prefix, user_settings, self.platform_settings)
-		log_file=fs.File('sconf.log', builddir)
+		log_file = builddir.File('sconf.log')
 		env = self.env
 		conf = env.Configure(custom_tests = {
 				k.name:getattr(tests, k.name) for k in tests.custom_tests
@@ -4350,54 +4473,45 @@ class DXXArchive(DXXCommon):
 		env.MergeFlags(add_flags)
 
 class DXXProgram(DXXCommon):
-	class WrapKConfigStaticObject:
-		def __init__(self,program,env,StaticObject):
-			self.program = program
-			self.env = env
-		def __call__(self,target,source,*args,**kwargs):
-			env = self.env
-			kconfig_static_object = env.StaticObject(target=target, source=source, *args, **kwargs)
-			program = self.program
-			builddir = '%s%s' % (program.user_settings.builddir, program.target)
+	LazyObjectState = DXXCommon.LazyObjectState
+	def _generate_kconfig_ui_table(program,env,source,target,kconfig_static_object):
+			builddir = program.builddir.Dir(program.target)
+			kwargs = {}
 			# Bypass ccache, if any, since this is a preprocess only
 			# call.
-			kwargs['CXXFLAGS'] = (kwargs.get('CXXFLAGS', None) or env['CXXFLAGS'] or []) + ['-E']
-			cpp_kconfig_udlr = env._rebirth_nopch_StaticObject(target=target[:-1] + 'ui-table.i', source=source[:-3] + 'ui-table.cpp', CXXCOM=env._dxx_cxxcom_no_ccache_prefix, *args, **kwargs)
-			generated_udlr_header = env.File('%s/kconfig.udlr.h' % builddir)
+			kwargs['CXXFLAGS'] = (env['CXXFLAGS'] or []) + ['-E']
+			cpp_kconfig_udlr = env._rebirth_nopch_StaticObject(target=str(target)[:-1] + 'ui-table.i', source=source[:-3] + 'ui-table.cpp', CXXCOM=env._dxx_cxxcom_no_ccache_prefix, **kwargs)
+			generated_udlr_header = builddir.File('kconfig.udlr.h')
 			generate_kconfig_udlr = env.File('similar/main/generate-kconfig-udlr.py')
 			env.Command(generated_udlr_header, [cpp_kconfig_udlr, generate_kconfig_udlr], [[sys.executable, generate_kconfig_udlr, '$SOURCE', '$TARGET']])
 			env.Depends(kconfig_static_object, generated_udlr_header)
-			return kconfig_static_object
+
 	static_archive_construction = {}
 	def _apply_target_name(self,name):
 		return os.path.join(os.path.dirname(name), '.%s.%s' % (self.target, os.path.splitext(os.path.basename(name))[0]))
 	def _apply_env_version_seq(self,env,_empty={}):
 		return _empty if self.user_settings.pch else {'CPPDEFINES' : env['CPPDEFINES'] + [('DXX_VERSION_SEQ', self.DXX_VERSION_SEQ)]}
-	get_objects_similar_arch_ogl = DXXCommon.create_lazy_object_getter(({
-		'source':(
+	get_objects_similar_arch_ogl = DXXCommon.create_lazy_object_states_getter((LazyObjectState(sources=(
 'similar/arch/ogl/gr.cpp',
 'similar/arch/ogl/ogl.cpp',
 ),
-		DXXCommon.key_transform_target:_apply_target_name,
-	},
+		transform_target=_apply_target_name,
+	),
 	))
-	get_objects_similar_arch_sdl = DXXCommon.create_lazy_object_getter(({
-		'source':(
+	get_objects_similar_arch_sdl = DXXCommon.create_lazy_object_states_getter((LazyObjectState(sources=(
 'similar/arch/sdl/gr.cpp',
 ),
-		DXXCommon.key_transform_target:_apply_target_name,
-	},
+		transform_target=_apply_target_name,
+	),
 	))
-	get_objects_similar_arch_sdlmixer = DXXCommon.create_lazy_object_getter(({
-		'source':(
+	get_objects_similar_arch_sdlmixer = DXXCommon.create_lazy_object_states_getter((LazyObjectState(sources=(
 'similar/arch/sdl/digi_mixer.cpp',
 'similar/arch/sdl/jukebox.cpp',
 ),
-		DXXCommon.key_transform_target:_apply_target_name,
-	},
+		transform_target=_apply_target_name,
+	),
 	))
-	__get_objects_common = DXXCommon.create_lazy_object_getter(({
-		'source':(
+	__get_objects_common = DXXCommon.create_lazy_object_states_getter((LazyObjectState(sources=(
 'similar/2d/font.cpp',
 'similar/2d/palette.cpp',
 'similar/2d/pcx.cpp',
@@ -4468,35 +4582,30 @@ class DXXProgram(DXXCommon):
 'similar/main/weapon.cpp',
 'similar/misc/args.cpp',
 ),
-		DXXCommon.key_transform_target:_apply_target_name,
-	}, {
-		'source': (
+		transform_target=_apply_target_name,
+	), LazyObjectState(sources=(
 'similar/main/inferno.cpp',
 ),
-		DXXCommon.key_transform_env: lambda self, env: {'CPPDEFINES' : env['CPPDEFINES'] + env.__dxx_CPPDEFINE_SHAREPATH + env.__dxx_CPPDEFINE_git_version},
-		DXXCommon.key_transform_target:_apply_target_name,
-	}, {
-		'source': (
+		transform_env = (lambda self, env: {'CPPDEFINES' : env['CPPDEFINES'] + env.__dxx_CPPDEFINE_SHAREPATH + env.__dxx_CPPDEFINE_git_version}),
+		transform_target=_apply_target_name,
+	), LazyObjectState(sources=(
 'similar/main/kconfig.cpp',
 ),
-		DXXCommon.key_transform_object:WrapKConfigStaticObject,
-		DXXCommon.key_transform_target:_apply_target_name,
-	}, {
-		'source': (
+		StaticObject_hook=_generate_kconfig_ui_table,
+		transform_target=_apply_target_name,
+	), LazyObjectState(sources=(
 'similar/misc/physfsx.cpp',
 ),
-		DXXCommon.key_transform_env: lambda self, env: {'CPPDEFINES' : env['CPPDEFINES'] + env.__dxx_CPPDEFINE_SHAREPATH},
-		DXXCommon.key_transform_target:_apply_target_name,
-	}, {
-		'source': (
+		transform_env = (lambda self, env: {'CPPDEFINES' : env['CPPDEFINES'] + env.__dxx_CPPDEFINE_SHAREPATH}),
+		transform_target=_apply_target_name,
+	), LazyObjectState(sources=(
 'similar/main/playsave.cpp',
 ),
-		DXXCommon.key_transform_env: _apply_env_version_seq,
-		DXXCommon.key_transform_target:_apply_target_name,
-	},
+		transform_env=_apply_env_version_seq,
+		transform_target=_apply_target_name,
+	),
 	))
-	get_objects_editor = DXXCommon.create_lazy_object_getter(({
-		'source':(
+	get_objects_editor = DXXCommon.create_lazy_object_states_getter((LazyObjectState(sources=(
 'similar/editor/centers.cpp',
 'similar/editor/curves.cpp',
 'similar/main/dumpmine.cpp',
@@ -4530,8 +4639,8 @@ class DXXProgram(DXXCommon):
 'similar/editor/texpage.cpp',
 'similar/editor/texture.cpp',
 ),
-		DXXCommon.key_transform_target:_apply_target_name,
-	},
+		transform_target=_apply_target_name,
+	),
 	))
 
 	class UserSettings(DXXCommon.UserSettings):
@@ -4543,7 +4652,6 @@ class DXXProgram(DXXCommon):
 	class Win32PlatformSettings(DXXCommon.Win32PlatformSettings):
 		def __init__(self,program,user_settings):
 			DXXCommon.Win32PlatformSettings.__init__(self,program,user_settings)
-			user_settings.sharepath = ''
 		def adjust_environment(self,program,env):
 			DXXCommon.Win32PlatformSettings.adjust_environment(self, program, env)
 			rcdir = 'similar/arch/win32'
@@ -4565,7 +4673,6 @@ class DXXProgram(DXXCommon):
 	class DarwinPlatformSettings(DXXCommon.DarwinPlatformSettings):
 		def __init__(self,program,user_settings):
 			DXXCommon.DarwinPlatformSettings.__init__(self,program,user_settings)
-			user_settings.sharepath = ''
 		def adjust_environment(self,program,env):
 			DXXCommon.DarwinPlatformSettings.adjust_environment(self, program, env)
 			VERSION = '%s.%s' % (program.VERSION_MAJOR, program.VERSION_MINOR)
@@ -4581,16 +4688,20 @@ class DXXProgram(DXXCommon):
 			DXXCommon.LinuxPlatformSettings.__init__(self,program,user_settings)
 			if user_settings.sharepath and user_settings.sharepath[-1] != '/':
 				user_settings.sharepath += '/'
+		def adjust_environment(self,program,env):
+			DXXCommon.LinuxPlatformSettings.adjust_environment(self,program,env)
+			user_settings = self.user_settings
+			if user_settings.need_dynamic_library_load():
+				env.Append(LIBS = ['dl'])
 
 	def get_objects_common(self,
 		__get_objects_common=__get_objects_common,
-		__get_objects_use_udp=DXXCommon.create_lazy_object_getter(({
-		'source':(
+		__get_objects_use_udp=DXXCommon.create_lazy_object_states_getter((LazyObjectState(sources=(
 'similar/main/net_udp.cpp',
 ),
-		DXXCommon.key_transform_env: _apply_env_version_seq,
-		DXXCommon.key_transform_target:_apply_target_name,
-	},
+		transform_env= _apply_env_version_seq,
+		transform_target=_apply_target_name,
+	),
 	))
 		):
 		value = list(__get_objects_common(self))
@@ -4634,12 +4745,19 @@ class DXXProgram(DXXCommon):
 		sharepath = self.user_settings.sharepath
 		# Must use [] here, not (), since it is concatenated with other
 		# lists.
-		env.__dxx_CPPDEFINE_SHAREPATH = [('SHAREPATH', self._quote_cppdefine(sharepath, f=str))] if sharepath else []
+		env.__dxx_CPPDEFINE_SHAREPATH = [('DXX_SHAREPATH', self._quote_cppdefine(sharepath, f=str))] if sharepath else []
+		message(self, "default sharepath is %r" % (sharepath or None))
 		env.Append(
 			CPPDEFINES = [
 				self.env_CPPDEFINES,
 		# For PRIi64
 				('__STDC_FORMAT_MACROS',),
+				# Every file that sees `GameArg` must know whether a
+				# sharepath exists.  Most files do not need to know the
+				# value of sharepath.  Pass only its existence, so that
+				# changing the sharepath does not needlessly rebuild
+				# those files.
+				('DXX_USE_SHAREPATH', int(not not sharepath)),
 			],
 			CPPPATH = [os.path.join(self.srcdir, 'main')],
 			LIBS = ['m'],
@@ -4652,11 +4770,11 @@ class DXXProgram(DXXCommon):
 			exe_target = os.path.join(self.srcdir, self.target)
 			if user_settings.editor:
 				exe_target += '-editor'
-		exe_target = os.path.join(user_settings.builddir, exe_target)
 		env = self.env
 		PROGSUFFIX = env['PROGSUFFIX']
 		if PROGSUFFIX and not exe_target.endswith(PROGSUFFIX):
 			exe_target += PROGSUFFIX
+		exe_target = self.builddir.File(exe_target)
 		if user_settings.register_compile_target:
 			exe_target = self._register_program(exe_target)
 			ToolchainInformation.show_partial_environ(env, user_settings, lambda s, _message=message, _self=self: _message(self, s))
@@ -4779,7 +4897,8 @@ class DXXProgram(DXXCommon):
 			node.append('\t%s\n' % f.node)
 			# Sacrifice some precision so that the printed output is
 			# valid shell input.
-			command.append('\n %s' % ' '.join(f.command))
+			c = f.command
+			command.append('\n %s' % (' '.join(c) if isinstance(c, list) else c))
 		if not total:
 			return
 		print("Failed target count: total=%u; targets with enable_build_failure_summary=1: %u" % (total, len(node)))
@@ -4817,6 +4936,7 @@ class DXXProgram(DXXCommon):
 					resources=[[os.path.join(self.srcdir, s), s] for s in ['English.lproj/InfoPlist.strings']])
 
 class D1XProgram(DXXProgram):
+	LazyObjectState = DXXProgram.LazyObjectState
 	PROGRAM_NAME = 'D1X-Rebirth'
 	target = \
 	srcdir = 'd1x-rebirth'
@@ -4826,13 +4946,25 @@ class D1XProgram(DXXProgram):
 	# general source files
 	def get_objects_common(self,
 		__get_dxx_objects_common=DXXProgram.get_objects_common, \
-		__get_dsx_objects_common=DXXCommon.create_lazy_object_getter(({
-		'source':(
-'d1x-rebirth/main/bmread.cpp',
+		__get_dsx_objects_common=DXXCommon.create_lazy_object_states_getter((LazyObjectState(sources=(
 'd1x-rebirth/main/custom.cpp',
 'd1x-rebirth/main/snddecom.cpp',
 ),
-	},
+	),
+	LazyObjectState(sources=(
+			# In Descent 1, bmread.cpp is used for both the regular
+			# build and the editor build.
+			#
+			# In Descent 2, bmread.cpp is only used for the editor
+			# build.
+			#
+			# Handle that inconsistency by defining it in the
+			# per-program lookup (D1XProgram, D2XProgram), not in the
+			# shared program lookup (DXXProgram).
+'similar/main/bmread.cpp',
+),
+		transform_target=DXXProgram._apply_target_name,
+	),
 	))
 		):
 		value = __get_dxx_objects_common(self)
@@ -4842,17 +4974,16 @@ class D1XProgram(DXXProgram):
 	# for editor
 	def get_objects_editor(self,
 		__get_dxx_objects_editor=DXXProgram.get_objects_editor,
-		__get_dsx_objects_editor=DXXCommon.create_lazy_object_getter(({
-		'source':(
+		__get_dsx_objects_editor=DXXCommon.create_lazy_object_getter((
 'd1x-rebirth/editor/ehostage.cpp',
 ),
-	},
-	))):
+	)):
 		value = list(__get_dxx_objects_editor(self))
 		value.extend(__get_dsx_objects_editor(self))
 		return value
 
 class D2XProgram(DXXProgram):
+	LazyObjectState = DXXProgram.LazyObjectState
 	PROGRAM_NAME = 'D2X-Rebirth'
 	target = \
 	srcdir = 'd2x-rebirth'
@@ -4862,8 +4993,7 @@ class D2XProgram(DXXProgram):
 	# general source files
 	def get_objects_common(self,
 		__get_dxx_objects_common=DXXProgram.get_objects_common, \
-		__get_dsx_objects_common=DXXCommon.create_lazy_object_getter(({
-		'source':(
+		__get_dsx_objects_common=DXXCommon.create_lazy_object_getter((
 'd2x-rebirth/libmve/decoder8.cpp',
 'd2x-rebirth/libmve/decoder16.cpp',
 'd2x-rebirth/libmve/mve_audio.cpp',
@@ -4873,8 +5003,6 @@ class D2XProgram(DXXProgram):
 'd2x-rebirth/main/gamepal.cpp',
 'd2x-rebirth/main/movie.cpp',
 'd2x-rebirth/misc/physfsrwops.cpp',
-),
-	},
 	))):
 		value = __get_dxx_objects_common(self)
 		value.extend(__get_dsx_objects_common(self))
@@ -4883,11 +5011,14 @@ class D2XProgram(DXXProgram):
 	# for editor
 	def get_objects_editor(self,
 		__get_dxx_objects_editor=DXXProgram.get_objects_editor, \
-		__get_dsx_objects_editor=DXXCommon.create_lazy_object_getter(({
-		'source':(
-'d2x-rebirth/main/bmread.cpp',
+		__get_dsx_objects_editor=DXXCommon.create_lazy_object_states_getter((LazyObjectState(sources=(
+			# See comment by D1XProgram reference to bmread.cpp for why
+			# this is here instead of in the usual handling for similar
+			# files.
+'similar/main/bmread.cpp',
 ),
-		},
+		transform_target=DXXProgram._apply_target_name,
+		),
 		))):
 		value = list(__get_dxx_objects_editor(self))
 		value.extend(__get_dsx_objects_editor(self))

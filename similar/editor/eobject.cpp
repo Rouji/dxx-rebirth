@@ -61,21 +61,15 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define	OBJ_SCALE		(F1_0/2)
 #define	OBJ_DEL_SIZE	(F1_0/2)
 
-static void show_objects_in_segment(const vcsegptr_t sp)
-{
-	range_for (const auto i, objects_in(sp, vcobjptridx, vcsegptr))
-		(void)i;
-}
-
 //returns the number of the first object in a segment, skipping the player
-static objnum_t get_first_object(const vmsegptr_t seg)
+static objnum_t get_first_object(fvcobjptr &vcobjptr, const unique_segment &seg)
 {
-	const auto id = seg->objects;
+	const auto id = seg.objects;
 	if (id == object_none)
 		return object_none;
-	const auto &&o = vmobjptr(id);
-	if (o == ConsoleObject)
-		return o->next;
+	auto &o = *vcobjptr(id);
+	if (&o == ConsoleObject)
+		return o.next;
 	return id;
 }
 
@@ -83,12 +77,12 @@ static objnum_t get_first_object(const vmsegptr_t seg)
 static objnum_t get_next_object(const vmsegptr_t seg,objnum_t id)
 {
 	if (id == object_none)
-		return get_first_object(seg);
+		return get_first_object(vcobjptr, seg);
 	for (auto o = vmobjptr(id);;)
 	{
 		id = o->next;
 		if (id == object_none)
-			return get_first_object(seg);
+			return get_first_object(vcobjptr, seg);
 		o = vmobjptr(id);
 		if (o != ConsoleObject)
 			return id;
@@ -117,9 +111,11 @@ int place_object(const vmsegptridx_t segp, const vms_vector &object_pos, short o
 {
 	vms_matrix seg_matrix;
 
-	med_extract_matrix_from_segment(segp,&seg_matrix);
+	med_extract_matrix_from_segment(segp, seg_matrix);
 
 	imobjptridx_t objnum = object_none;
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	switch (object_type)
 	{
 
@@ -258,8 +254,6 @@ int place_object(const vmsegptridx_t segp, const vms_vector &object_pos, short o
 	Cur_object_index = objnum;
 	//Cur_object_seg = Cursegp;
 
-	show_objects_in_segment(Cursegp);
-
 	Update_flags |= UF_WORLD_CHANGED;
 
 	return 1;
@@ -317,6 +311,8 @@ int ObjectPlaceObject(void)
 	}
 
 	//update_due_to_new_segment();
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	const auto cur_object_loc = compute_segment_center(vcvertptr, Cursegp);
 
 	old_cur_object_index = Cur_object_index;
@@ -335,6 +331,8 @@ int ObjectPlaceObjectTmap(void)
 {
 	int	rval, old_cur_object_index;
 	//update_due_to_new_segment();
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	const auto cur_object_loc = compute_segment_center(vcvertptr, Cursegp);
 
 	old_cur_object_index = Cur_object_index;
@@ -435,7 +433,7 @@ int ObjectDelete(void)
 		auto delete_objnum = Cur_object_index;
 		ObjectSelectNextinSegment();
 
-		obj_delete(vmobjptridx(delete_objnum));
+		obj_delete(LevelUniqueObjectState, Segments, vmobjptridx(delete_objnum));
 
 		if (delete_objnum == Cur_object_index)
 			Cur_object_index = object_none;
@@ -450,9 +448,9 @@ int ObjectDelete(void)
 //	Object has moved to another segment, (or at least poked through).
 //	If still in mine, that is legal, so relink into new segment.
 //	Return value:	0 = in mine, 1 = not in mine
-static int move_object_within_mine(const vmobjptridx_t obj, const vms_vector &newpos)
+static int move_object_within_mine(fvmobjptr &vmobjptr, segment_array &Segments, fvcvertptr &vcvertptr, const vmobjptridx_t obj, const vms_vector &newpos)
 {
-	range_for (const auto &&segp, vmsegptridx)
+	range_for (const auto &&segp, Segments.vmptridx)
 	{
 		if (get_seg_masks(vcvertptr, obj->pos, segp, 0).centermask == 0) {
 			int	fate;
@@ -472,26 +470,23 @@ static int move_object_within_mine(const vmobjptridx_t obj, const vms_vector &ne
 
 			if (fate != HIT_WALL) {
 				if (segp != obj->segnum)
-					obj_relink(vmobjptr, vmsegptr, obj, segp);
+					obj_relink(vmobjptr, Segments.vmptr, obj, segp);
 				obj->pos = newpos;
 				return 0;
 			}
 		}
 	}
-
 	return 1;
-
 }
 
-
 //	Return 0 if object is in expected segment, else return 1
-static int verify_object_seg(const vmobjptridx_t objp, const vms_vector &newpos)
+static int verify_object_seg(fvmobjptr &vmobjptr, segment_array &Segments, fvcvertptr &vcvertptr, const vmobjptridx_t objp, const vms_vector &newpos)
 {
-	const auto &&result = get_seg_masks(vcvertptr, newpos, vcsegptr(objp->segnum), objp->size);
+	const auto &&result = get_seg_masks(vcvertptr, newpos, Segments.vcptr(objp->segnum), objp->size);
 	if (result.facemask == 0)
 		return 0;
 	else
-		return move_object_within_mine(objp, newpos);
+		return move_object_within_mine(vmobjptr, Segments, vcvertptr, objp, newpos);
 }
 
 namespace {
@@ -499,10 +494,10 @@ namespace {
 class extract_fvec_from_segment
 {
 public:
-	static vms_vector get(vcsegptr_t segp)
+	static vms_vector get(fvcvertptr &vcvertptr, const shared_segment &segp)
 	{
 		vms_vector v;
-		extract_forward_vector_from_segment(segp, v);
+		extract_forward_vector_from_segment(vcvertptr, segp, v);
 		return v;
 	}
 };
@@ -510,10 +505,10 @@ public:
 class extract_rvec_from_segment
 {
 public:
-	static vms_vector get(vcsegptr_t segp)
+	static vms_vector get(fvcvertptr &vcvertptr, const shared_segment &segp)
 	{
 		vms_vector v;
-		extract_right_vector_from_segment(segp, v);
+		extract_right_vector_from_segment(vcvertptr, segp, v);
 		return v;
 	}
 };
@@ -521,10 +516,10 @@ public:
 class extract_uvec_from_segment
 {
 public:
-	static vms_vector get(vcsegptr_t segp)
+	static vms_vector get(fvcvertptr &vcvertptr, const shared_segment &segp)
 	{
 		vms_vector v;
-		extract_up_vector_from_segment(segp, v);
+		extract_up_vector_from_segment(vcvertptr, segp, v);
 		return v;
 	}
 };
@@ -539,7 +534,9 @@ static int ObjectMovePos(const vmobjptridx_t obj, vms_vector &&vec, int scale)
 {
 	vm_vec_normalize(vec);
 	const auto &&newpos = vm_vec_add(obj->pos, vm_vec_scale(vec, scale));
-	if (!verify_object_seg(obj, newpos))
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	if (!verify_object_seg(vmobjptr, Segments, vcvertptr, obj, newpos))
 		obj->pos = newpos;
 	Update_flags |= UF_WORLD_CHANGED;
 	return 1;
@@ -552,7 +549,9 @@ static int ObjectMove()
 	if (i == object_none)
 		return ObjectMoveFailed();
 	const auto &&obj = vmobjptridx(i);
-	return ObjectMovePos(obj, extract_type::get(vcsegptr(obj->segnum)), direction * OBJ_SCALE);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	return ObjectMovePos(obj, extract_type::get(vcvertptr, vcsegptr(obj->segnum)), direction * OBJ_SCALE);
 }
 
 }
@@ -592,6 +591,8 @@ int	ObjectSetDefault(void)
 	}
 
 	const auto &&objp = vmobjptr(Cur_object_index);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	compute_segment_center(vcvertptr, objp->pos, vcsegptr(objp->segnum));
 
 	Update_flags |= UF_WORLD_CHANGED;
@@ -638,7 +639,7 @@ static int rotate_object(const vmobjptridx_t obj, int p, int b, int h)
 
 static void reset_object(const vmobjptridx_t obj)
 {
-	med_extract_matrix_from_segment(vcsegptr(obj->segnum), &obj->orient);
+	med_extract_matrix_from_segment(vcsegptr(obj->segnum), obj->orient);
 }
 
 int ObjectResetObject()
@@ -707,18 +708,20 @@ template int ObjectIncreaseHeadingBig();
 
 static void move_object_to_position(const vmobjptridx_t objp, const vms_vector &newpos)
 {
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	if (get_seg_masks(vcvertptr, newpos, vcsegptr(objp->segnum), objp->size).facemask == 0)
 	{
 		objp->pos = newpos;
 	} else {
-		if (verify_object_seg(objp, newpos)) {
+		if (verify_object_seg(vmobjptr, Segments, vcvertptr, objp, newpos)) {
 			int		fate;
 			object	temp_viewer_obj;
 			fvi_query fq;
 			fvi_info	hit_info;
 
 			temp_viewer_obj = *Viewer;
-			auto viewer_segnum = find_object_seg(vmobjptr(Viewer));
+			auto viewer_segnum = find_object_seg(LevelSharedSegmentState, LevelUniqueSegmentState, *Viewer);
 			temp_viewer_obj.segnum = viewer_segnum;
 
 			//	If the viewer is outside the mine, get him in the mine!
@@ -777,7 +780,7 @@ static void move_object_to_position(const vmobjptridx_t objp, const vms_vector &
 			if (fate == HIT_WALL) {
 
 				objp->pos = hit_info.hit_pnt;
-				const auto &&segp = find_object_seg(objp);
+				const auto &&segp = find_object_seg(LevelSharedSegmentState, LevelUniqueSegmentState, objp);
 				if (segp != segment_none)
 					obj_relink(vmobjptr, vmsegptr, objp, segp);
 			} else {

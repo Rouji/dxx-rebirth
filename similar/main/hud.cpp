@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -53,9 +53,9 @@ struct hudmsg
 	}
 };
 
+struct hudmsg_array_t : public count_array_t<hudmsg, HUD_MAX_NUM_STOR> {};
 }
 
-struct hudmsg_array_t : public count_array_t<hudmsg, HUD_MAX_NUM_STOR> {};
 static hudmsg_array_t HUD_messages;
 
 
@@ -102,10 +102,7 @@ void HUD_render_message_frame(grs_canvas &canvas)
 		const auto &&line_spacing = LINE_SPACING(game_font, game_font);
 #if defined(DXX_BUILD_DESCENT_II)
 		if (PlayerCfg.GuidedInBigWindow &&
-			Guided_missile[Player_num] &&
-			Guided_missile[Player_num]->type == OBJ_WEAPON &&
-			get_weapon_id(*Guided_missile[Player_num]) == weapon_id_type::GUIDEDMISS_ID &&
-			Guided_missile[Player_num]->signature == Guided_missile_sig[Player_num])
+			LevelUniqueObjectState.Guided_missile.get_player_active_guided_missile(LevelUniqueObjectState.get_objects().vmptr, Player_num) != nullptr)
 			y += line_spacing;
 #endif
 
@@ -241,7 +238,8 @@ void player_dead_message(grs_canvas &canvas)
 {
 	if (Player_dead_state == player_dead_state::exploded)
 	{
-		if ( get_local_player().lives < 2 )    {
+		if (get_local_player().lives == 1)
+		{
 			int x, y, w, h;
 			auto &huge_font = *HUGE_FONT;
 			gr_get_string_size(huge_font, TXT_GAME_OVER, &w, &h, nullptr);

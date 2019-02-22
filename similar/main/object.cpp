@@ -120,10 +120,10 @@ void object_goto_next_viewer()
 		start_obj++;
 		if (start_obj > Highest_object_index ) start_obj = 0;
 
-		const auto &&objp = vmobjptr(start_obj);
-		if (objp->type != OBJ_NONE)
+		auto &objp = *vmobjptr(start_obj);
+		if (objp.type != OBJ_NONE)
 		{
-			Viewer = objp;
+			Viewer = &objp;
 			return;
 		}
 	}
@@ -216,7 +216,7 @@ void draw_object_tmap_rod(grs_canvas &canvas, const vcobjptridx_t obj, const bit
 #define	CLOAK_FADEOUT_DURATION_ROBOT	F1_0
 
 //do special cloaked render
-static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const g3s_lrgb light, glow_values_t glow, const fix64 cloak_start_time, const fix total_cloaked_time, const fix Cloak_fadein_duration, const fix Cloak_fadeout_duration)
+static void draw_cloaked_object(grs_canvas &canvas, const object_base &obj, const g3s_lrgb light, glow_values_t glow, const fix64 cloak_start_time, const fix total_cloaked_time, const fix Cloak_fadein_duration, const fix Cloak_fadeout_duration)
 {
 	fix cloak_delta_time;
 	fix light_scale=F1_0;
@@ -286,7 +286,7 @@ static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const 
 	if (fading)
 #endif
 	{
-		const unsigned ati = static_cast<unsigned>(obj->rtype.pobj_info.alt_textures) - 1;
+		const unsigned ati = static_cast<unsigned>(obj.rtype.pobj_info.alt_textures) - 1;
 		if (ati < multi_player_textures.size())
 		{
 			alt_textures = multi_player_textures[ati];
@@ -300,10 +300,10 @@ static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const 
 		new_light.g = fixmul(light.g,light_scale);
 		new_light.b = fixmul(light.b,light_scale);
 		glow[0] = fixmul(glow[0],light_scale);
-		draw_polygon_model(canvas, obj->pos,
-				   obj->orient,
-				   obj->rtype.pobj_info.anim_angles,
-				   obj->rtype.pobj_info.model_num,obj->rtype.pobj_info.subobj_flags,
+		draw_polygon_model(canvas, obj.pos,
+				   obj.orient,
+				   obj.rtype.pobj_info.anim_angles,
+				   obj.rtype.pobj_info.model_num, obj.rtype.pobj_info.subobj_flags,
 				   new_light,
 				   &glow,
 				   alt_textures );
@@ -311,10 +311,10 @@ static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const 
 	else {
 		gr_settransblend(canvas, cloak_value, GR_BLEND_NORMAL);
 		g3_set_special_render(draw_tmap_flat);		//use special flat drawer
-		draw_polygon_model(canvas, obj->pos,
-				   obj->orient,
-				   obj->rtype.pobj_info.anim_angles,
-				   obj->rtype.pobj_info.model_num,obj->rtype.pobj_info.subobj_flags,
+		draw_polygon_model(canvas, obj.pos,
+				   obj.orient,
+				   obj.rtype.pobj_info.anim_angles,
+				   obj.rtype.pobj_info.model_num, obj.rtype.pobj_info.subobj_flags,
 				   light,
 				   &glow,
 				   alt_textures );
@@ -327,6 +327,7 @@ static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const 
 //draw an object which renders as a polygon model
 static void draw_polygon_object(grs_canvas &canvas, const vcobjptridx_t obj)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	g3s_lrgb light;
 	glow_values_t engine_glow_value;
 	engine_glow_value[0] = 0;
@@ -395,11 +396,7 @@ static void draw_polygon_object(grs_canvas &canvas, const vcobjptridx_t obj)
 #endif
 
 	if (obj->rtype.pobj_info.tmap_override != -1) {
-#ifndef NDEBUG
-		polymodel *pm = &Polygon_models[obj->rtype.pobj_info.model_num];
-#endif
 		array<bitmap_index, 12> bm_ptrs;
-		Assert(pm->n_textures<=12);
 
 		//fill whole array, in case simple model needs more
 		bm_ptrs.fill(Textures[obj->rtype.pobj_info.tmap_override]);
@@ -598,7 +595,7 @@ void create_small_fireball_on_object(const vmobjptridx_t objp, fix size_scale, i
 	size = fixmul(size_scale, F1_0/2 + d_rand()*4/2);
 #endif
 
-	const auto &&segnum = find_point_seg(pos, vmsegptridx(objp->segnum));
+	const auto &&segnum = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, pos, Segments.vmptridx(objp->segnum));
 	if (segnum != segment_none) {
 		auto expl_obj = object_create_explosion(segnum, pos, size, VCLIP_SMALL_EXPLOSION);
 		if (!expl_obj)
@@ -671,7 +668,7 @@ void render_object(grs_canvas &canvas, const vmobjptridx_t obj)
 				gr_settransblend(canvas, GR_FADE_OFF, GR_BLEND_ADDITIVE_C);
 			}
 
-			draw_fireball(canvas, obj);
+			draw_fireball(Vclip, canvas, obj);
 			break;
 
 		case RT_WEAPON_VCLIP:
@@ -681,11 +678,11 @@ void render_object(grs_canvas &canvas, const vmobjptridx_t obj)
 				gr_settransblend(canvas, 7, GR_BLEND_ADDITIVE_A);
 			}
 
-			draw_weapon_vclip(canvas, obj);
+			draw_weapon_vclip(Vclip, Weapon_info, canvas, obj);
 			break;
 
 		case RT_HOSTAGE:
-			draw_hostage(canvas, obj);
+			draw_hostage(Vclip, canvas, obj);
 			break;
 
 		case RT_POWERUP:
@@ -747,7 +744,7 @@ void render_object(grs_canvas &canvas, const vmobjptridx_t obj)
 						break;
 				}
 
-			draw_powerup(canvas, obj);
+			draw_powerup(Vclip, canvas, obj);
 			break;
 
 		case RT_LASER:
@@ -809,6 +806,7 @@ void init_player_object()
 	console->type = OBJ_PLAYER;
 	set_player_id(console, 0);					//no sub-types for player
 	console->signature = object_signature_t{0};			//player has zero, others start at 1
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	console->size = Polygon_models[Player_ship->model_num].rad;
 	console->control_type = CT_SLEW;			//default is player slewing
 	console->movement_type = MT_PHYSICS;		//change this sometime
@@ -822,7 +820,7 @@ void init_objects()
 {
 	for (objnum_t i = 0; i< MAX_OBJECTS; ++i)
 	{
-		ObjectState.free_obj_list[i] = i;
+		LevelUniqueObjectState.free_obj_list[i] = i;
 		auto &obj = *vmobjptr(i);
 		DXX_POISON_VAR(obj, 0xfd);
 		obj.type = OBJ_NONE;
@@ -831,33 +829,33 @@ void init_objects()
 	range_for (auto &j, Segments)
 		j.objects = object_none;
 
-	ConsoleObject = Viewer = &Objects.front();
+	Viewer = ConsoleObject = &Objects.front();
 
 	init_player_object();
 	obj_link_unchecked(Objects.vmptr, Objects.vmptridx(ConsoleObject), Segments.vmptridx(segment_first));	//put in the world in segment 0
-	ObjectState.num_objects = 1;						//just the player
+	LevelUniqueObjectState.num_objects = 1;						//just the player
 	Objects.set_count(1);
 }
 
 //after calling init_object(), the network code has grabbed specific
 //object slots without allocating them.  Go though the objects & build
 //the free list, then set the apporpriate globals
-void special_reset_objects(d_level_object_state &ObjectState)
+void special_reset_objects(d_level_unique_object_state &LevelUniqueObjectState)
 {
 	unsigned num_objects = MAX_OBJECTS;
 
-	auto &Objects = ObjectState.get_objects();
+	auto &Objects = LevelUniqueObjectState.get_objects();
 	Objects.set_count(1);
 	assert(Objects.front().type != OBJ_NONE);		//0 should be used
 
-	DXX_POISON_VAR(ObjectState.free_obj_list, 0xfd);
+	DXX_POISON_VAR(LevelUniqueObjectState.free_obj_list, 0xfd);
 	for (objnum_t i = MAX_OBJECTS; i--;)
 		if (Objects.vcptr(i)->type == OBJ_NONE)
-			ObjectState.free_obj_list[--num_objects] = i;
+			LevelUniqueObjectState.free_obj_list[--num_objects] = i;
 		else
 			if (i > Highest_object_index)
 				Objects.set_count(i + 1);
-	ObjectState.num_objects = num_objects;
+	LevelUniqueObjectState.num_objects = num_objects;
 }
 
 //link the object into the list for its segment
@@ -940,13 +938,13 @@ object_signature_t obj_get_signature()
 //Generally, obj_create() should be called to get an object, since it
 //fills in important fields and does the linking.
 //returns -1 if no free objects
-imobjptridx_t obj_allocate(d_level_object_state &ObjectState)
+imobjptridx_t obj_allocate(d_level_unique_object_state &LevelUniqueObjectState)
 {
-	auto &Objects = ObjectState.get_objects();
-	if (ObjectState.num_objects >= Objects.size())
+	auto &Objects = LevelUniqueObjectState.get_objects();
+	if (LevelUniqueObjectState.num_objects >= Objects.size())
 		return object_none;
 
-	const auto objnum = ObjectState.free_obj_list[ObjectState.num_objects++];
+	const auto objnum = LevelUniqueObjectState.free_obj_list[LevelUniqueObjectState.num_objects++];
 	if (objnum >= Objects.get_count())
 	{
 		Objects.set_count(objnum + 1);
@@ -959,12 +957,12 @@ imobjptridx_t obj_allocate(d_level_object_state &ObjectState)
 //frees up an object.  Generally, obj_delete() should be called to get
 //rid of an object.  This function deallocates the object entry after
 //the object has been unlinked
-static void obj_free(d_level_object_state &ObjectState, const vmobjidx_t objnum)
+static void obj_free(d_level_unique_object_state &LevelUniqueObjectState, const vmobjidx_t objnum)
 {
-	const auto num_objects = -- ObjectState.num_objects;
-	assert(num_objects < ObjectState.free_obj_list.size());
-	ObjectState.free_obj_list[num_objects] = objnum;
-	auto &Objects = ObjectState.get_objects();
+	const auto num_objects = -- LevelUniqueObjectState.num_objects;
+	assert(num_objects < LevelUniqueObjectState.free_obj_list.size());
+	LevelUniqueObjectState.free_obj_list[num_objects] = objnum;
+	auto &Objects = LevelUniqueObjectState.get_objects();
 
 	objnum_t o = objnum;
 	if (o == Highest_object_index)
@@ -1083,12 +1081,14 @@ imobjptridx_t obj_create(object_type_t type, ubyte id,vmsegptridx_t segnum,const
 	// Some consistency checking. FIXME: Add more debug output here to probably trace all possible occurances back.
 	Assert(ctype <= CT_CNTRLCEN);
 
-	if (type == OBJ_DEBRIS && ObjectState.Debris_object_count >= Max_debris_objects && !PERSISTENT_DEBRIS)
+	if (type == OBJ_DEBRIS && LevelUniqueObjectState.Debris_object_count >= Max_debris_objects && !PERSISTENT_DEBRIS)
 		return object_none;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	if (get_seg_masks(vcvertptr, pos, segnum, 0).centermask != 0)
 	{
-		auto p = find_point_seg(pos,segnum);
+		const auto &&p = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, pos, segnum);
 		if (p == segment_none) {
 			return object_none;		//don't create this object
 		}
@@ -1096,12 +1096,11 @@ imobjptridx_t obj_create(object_type_t type, ubyte id,vmsegptridx_t segnum,const
 	}
 
 	// Find next free object
-	const auto &&obj = obj_allocate(ObjectState);
+	const auto &&obj = obj_allocate(LevelUniqueObjectState);
 
 	if (obj == object_none)		//no free objects
 		return object_none;
 
-	Assert(obj->type == OBJ_NONE);		//make sure unused
 	auto signature = obj_get_signature();
 	// Zero out object structure to keep weird bugs from happening
 	// in uninitialized fields.
@@ -1153,7 +1152,7 @@ imobjptridx_t obj_create(object_type_t type, ubyte id,vmsegptridx_t segnum,const
 	obj->shields 				= 20*F1_0;
 
 	{
-		auto p = find_point_seg(pos,segnum);		//find correct segment
+		const auto &&p = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, pos, segnum);		//find correct segment
 		// Previously this was only an assert check.  Now it is also
 		// checked at runtime.
 		segnum = p;
@@ -1177,24 +1176,21 @@ imobjptridx_t obj_create(object_type_t type, ubyte id,vmsegptridx_t segnum,const
 		obj->ctype.expl_info.next_attach = obj->ctype.expl_info.prev_attach = obj->ctype.expl_info.attach_parent = object_none;
 
 	if (obj->type == OBJ_DEBRIS)
-		++ ObjectState.Debris_object_count;
+		++ LevelUniqueObjectState.Debris_object_count;
 
 	return obj;
 }
 
-#if DXX_USE_EDITOR
 //create a copy of an object. returns new object number
-imobjptridx_t obj_create_copy(const object &srcobj, const vms_vector &new_pos, const vmsegptridx_t newsegnum)
+imobjptridx_t obj_create_copy(const object &srcobj, const vmsegptridx_t newsegnum)
 {
 	// Find next free object
-	const auto &&obj = obj_allocate(ObjectState);
+	const auto &&obj = obj_allocate(LevelUniqueObjectState);
 
 	if (obj == object_none)
 		return object_none;
 
 	*obj = srcobj;
-
-	obj->pos = obj->last_pos = new_pos;
 
 	obj_link_unchecked(Objects.vmptr, obj, newsegnum);
 
@@ -1203,27 +1199,31 @@ imobjptridx_t obj_create_copy(const object &srcobj, const vms_vector &new_pos, c
 	//we probably should initialize sub-structures here
 
 	return obj;
-
 }
-#endif
 
 //remove object from the world
-void obj_delete(const vmobjptridx_t obj)
+void obj_delete(d_level_unique_object_state &LevelUniqueObjectState, segment_array &Segments, const vmobjptridx_t obj)
 {
+	auto &Objects = LevelUniqueObjectState.get_objects();
 	Assert(obj->type != OBJ_NONE);
 	Assert(obj != ConsoleObject);
 
 #if defined(DXX_BUILD_DESCENT_II)
 	if (obj->type==OBJ_WEAPON && get_weapon_id(obj)==weapon_id_type::GUIDEDMISS_ID && obj->ctype.laser_info.parent_type==OBJ_PLAYER)
 	{
-		const auto pnum = get_player_id(vcobjptr(obj->ctype.laser_info.parent_num));
-
-		if (pnum!=Player_num) {
-			Guided_missile[pnum]=NULL;
+		const auto pnum = get_player_id(Objects.vcptr(obj->ctype.laser_info.parent_num));
+		const auto &&gimobj = LevelUniqueObjectState.Guided_missile.get_player_active_guided_missile(Objects.vmptridx, pnum);
+		if (gimobj == obj)
+		{
+			LevelUniqueObjectState.Guided_missile.clear_player_active_guided_missile(pnum);
+			if (pnum == Player_num)
+			{
+				if (!PlayerCfg.GuidedInBigWindow)
+					do_cockpit_window_view(1, WBU_STATIC);
+				if (Newdemo_state == ND_STATE_RECORDING)
+					newdemo_record_guided_end();
+			}
 		}
-		else if (Newdemo_state==ND_STATE_RECORDING)
-			newdemo_record_guided_end();
-		
 	}
 #endif
 
@@ -1237,19 +1237,21 @@ void obj_delete(const vmobjptridx_t obj)
 		obj_detach_all(Objects, obj);
 
 	if (obj->type == OBJ_DEBRIS)
-		-- ObjectState.Debris_object_count;
+		-- LevelUniqueObjectState.Debris_object_count;
 
+	if (obj->movement_type == MT_PHYSICS && (obj->mtype.phys_info.flags & PF_STICK))
+		LevelUniqueStuckObjectState.remove_stuck_object(obj);
 	obj_unlink(Objects.vmptr, Segments.vmptr, obj);
 	DXX_POISON_VAR(*obj, 0xfa);
 	obj->type = OBJ_NONE;		//unused!
-	obj_free(ObjectState, obj);
+	obj_free(LevelUniqueObjectState, obj);
 }
 
 #define	DEATH_SEQUENCE_LENGTH			(F1_0*5)
 #define	DEATH_SEQUENCE_EXPLODE_TIME	(F1_0*2)
 
 object	*Dead_player_camera = NULL;	//	Object index of object watching deader.
-static object *Viewer_save;
+static const object *Viewer_save;
 }
 namespace dcx {
 player_dead_state Player_dead_state = player_dead_state::no;			//	If !0, then player is dead, but game continues so he can watch.
@@ -1270,7 +1272,7 @@ void dead_player_end(void)
 		newdemo_record_restore_cockpit();
 
 	Player_dead_state = player_dead_state::no;
-	obj_delete(vmobjptridx(Dead_player_camera));
+	obj_delete(LevelUniqueObjectState, Segments, vmobjptridx(Dead_player_camera));
 	Dead_player_camera = NULL;
 	select_cockpit(PlayerCfg.CockpitMode[0]);
 	Viewer = Viewer_save;
@@ -1513,7 +1515,7 @@ static void start_player_death_sequence(object &player)
 		Viewer = Dead_player_camera = objnum;
 	else {
 		Int3();
-		Dead_player_camera = Viewer;
+		Dead_player_camera = ConsoleObject;
 	}
 
 	select_cockpit(CM_LETTERBOX);
@@ -1552,7 +1554,7 @@ static void obj_delete_all_that_should_be_dead()
 					// kill_player();
 				}
 			} else {					
-				obj_delete(objp);
+				obj_delete(LevelUniqueObjectState, Segments, objp);
 			}
 		}
 	}
@@ -1603,6 +1605,60 @@ static void spin_object(object_base &obj)
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
+imobjidx_t d_guided_missile_indices::get_player_active_guided_missile(const unsigned pnum) const
+{
+	return operator[](pnum);
+}
+
+/* Place debug checks out of line so that they are shared among the
+ * template instantiations.
+ */
+bool d_guided_missile_indices::debug_check_current_object(const object_base &obj)
+{
+	assert(obj.type == OBJ_WEAPON);
+	const auto gmid = get_weapon_id(obj);
+	if (obj.type != OBJ_WEAPON)
+		return false;
+	assert(gmid == weapon_id_type::GUIDEDMISS_ID);
+	if (gmid != weapon_id_type::GUIDEDMISS_ID)
+		return false;
+	return true;
+}
+
+template <typename R, typename F>
+R d_guided_missile_indices::get_player_active_guided_missile_tmpl(F &fobjptr, const unsigned pnum) const
+{
+	const auto gmidx = get_player_active_guided_missile(pnum);
+	if (gmidx == object_none)
+		return object_none;
+	auto &&gmobj = fobjptr(gmidx);
+	if (!debug_check_current_object(gmobj))
+		return object_none;
+	return gmobj;
+}
+
+imobjptr_t d_guided_missile_indices::get_player_active_guided_missile(fvmobjptr &vmobjptr, const unsigned pnum) const
+{
+	return this->template get_player_active_guided_missile_tmpl<imobjptr_t>(vmobjptr, pnum);
+}
+
+imobjptridx_t d_guided_missile_indices::get_player_active_guided_missile(fvmobjptridx &vmobjptridx, const unsigned pnum) const
+{
+	return this->template get_player_active_guided_missile_tmpl<imobjptridx_t>(vmobjptridx, pnum);
+}
+
+void d_guided_missile_indices::set_player_active_guided_missile(const vmobjidx_t obji, const unsigned pnum)
+{
+	auto &i = operator[](pnum);
+	i = obji;
+}
+
+void d_guided_missile_indices::clear_player_active_guided_missile(const unsigned pnum)
+{
+	auto &i = operator[](pnum);
+	i = object_none;
+}
+
 int Drop_afterburner_blob_flag;		//ugly hack
 //see if wall is volatile, and if so, cause damage to player
 //returns true if player is in lava
@@ -1621,12 +1677,12 @@ static window_event_result object_move_one(const vmobjptridx_t obj)
 		const auto &&segp = vmsegptr(obj->segnum);
 #if defined(DXX_BUILD_DESCENT_II)
 		if (game_mode_capture_flag())
-			fuelcen_check_for_goal(segp);
+			fuelcen_check_for_goal(obj, segp);
 		else if (game_mode_hoard())
-			fuelcen_check_for_hoard_goal(segp);
+			fuelcen_check_for_hoard_goal(obj, segp);
 #endif
 
-		auto &player_info = get_local_plrobj().ctype.player_info;
+		auto &player_info = obj->ctype.player_info;
 		auto &energy = player_info.energy;
 		const fix fuel = fuelcen_give_fuel(segp, INITIAL_ENERGY - energy);
 		if (fuel > 0 )	{
@@ -1676,7 +1732,7 @@ static window_event_result object_move_one(const vmobjptridx_t obj)
 			break;
 
 		case CT_POWERUP:
-			do_powerup_frame(obj);
+			do_powerup_frame(Vclip, obj);
 			break;
 	
 		case CT_MORPH:			//morph implies AI
@@ -1693,15 +1749,18 @@ static window_event_result object_move_one(const vmobjptridx_t obj)
 		case CT_WEAPON:		Laser_do_weapon_sequence(obj); break;
 		case CT_EXPLOSION:	do_explosion_sequence(obj); break;
 
-		#ifndef RELEASE
 		case CT_SLEW:
+#ifdef RELEASE
+			obj->control_type = CT_NONE;
+			con_printf(CON_URGENT, DXX_STRINGIZE_FL(__FILE__, __LINE__, "BUG: object %hu has control type CT_SLEW, sig/type/id = %i/%i/%i"), static_cast<objnum_t>(obj), obj->signature.get(), obj->type, obj->id);
+#else
 			if ( keyd_pressed[KEY_PAD5] ) slew_stop();
 			if ( keyd_pressed[KEY_NUMLOCK] ) 		{
 				slew_reset_orient();
 			}
 			slew_frame(0 );		// Does velocity addition for us.
+#endif
 			break;
-		#endif
 
 //		case CT_FLYTHROUGH:
 //			do_flythrough(obj,0);			// HACK:do_flythrough should operate on an object!!!!
@@ -1752,6 +1811,10 @@ static window_event_result object_move_one(const vmobjptridx_t obj)
 
 	}
 
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+#endif
 	//	If player and moved to another segment, see if hit any triggers.
 	// also check in player under a lavafall
 	if (prepare_seglist)
@@ -1784,16 +1847,18 @@ static window_event_result object_move_one(const vmobjptridx_t obj)
 
 			auto &playing = obj->ctype.player_info.lavafall_hiss_playing;
 			const auto &&segp = vcsegptr(obj->segnum);
+			auto &Vertices = LevelSharedVertexState.get_vertices();
+			auto &vcvertptr = Vertices.vcptr;
 			if (const auto sidemask = get_seg_masks(vcvertptr, obj->pos, segp, obj->size).sidemask)
 			{
 				for (unsigned sidenum = 0; sidenum != MAX_SIDES_PER_SEGMENT; ++sidenum)
 				{
 					if (!(sidemask & (1 << sidenum)))
 						continue;
-					const auto wall_num = segp->sides[sidenum].wall_num;
+					const auto wall_num = segp->shared_segment::sides[sidenum].wall_num;
 					if (wall_num != wall_none && vcwallptr(wall_num)->type == WALL_ILLUSION)
 					{
-						const auto type = check_volatile_wall(obj, segp, sidenum);
+						const auto type = check_volatile_wall(obj, segp->unique_segment::sides[sidenum]);
 						if (type != volatile_wall_result::none)
 						{
 							under_lavafall = 1;
@@ -1820,20 +1885,23 @@ static window_event_result object_move_one(const vmobjptridx_t obj)
 
 #if defined(DXX_BUILD_DESCENT_II)
 	//see if guided missile has flown through exit trigger
-	if (obj==Guided_missile[Player_num] && obj->signature==Guided_missile_sig[Player_num]) {
+	if (obj == LevelUniqueObjectState.Guided_missile.get_player_active_guided_missile(Player_num))
+	{
 		if (previous_segment != obj->segnum) {
 			const auto &&psegp = vcsegptr(previous_segment);
 			const auto &&connect_side = find_connect_side(vcsegptridx(obj->segnum), psegp);
 			if (connect_side != side_none)
 			{
-				const auto wall_num = psegp->sides[connect_side].wall_num;
+				const auto wall_num = psegp->shared_segment::sides[connect_side].wall_num;
 				if ( wall_num != wall_none ) {
 					auto trigger_num = vcwallptr(wall_num)->trigger;
 					if (trigger_num != trigger_none)
 					{
+						auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+						auto &vctrgptr = Triggers.vcptr;
 						const auto &&t = vctrgptr(trigger_num);
 						if (t->type == TT_EXIT)
-							Guided_missile[Player_num]->lifeleft = 0;
+							obj->lifeleft = 0;
 					}
 				}
 			}
@@ -1956,23 +2024,23 @@ void compress_objects(void)
 			
 		}
 	}
-	reset_objects(ObjectState, ObjectState.num_objects);
+	reset_objects(LevelUniqueObjectState, LevelUniqueObjectState.num_objects);
 }
 
 //called after load.  Takes number of objects,  and objects should be
 //compressed.  resets free list, marks unused objects as unused
-void reset_objects(d_level_object_state &ObjectState, const unsigned n_objs)
+void reset_objects(d_level_unique_object_state &LevelUniqueObjectState, const unsigned n_objs)
 {
-	ObjectState.Debris_object_count = 0;
-	ObjectState.num_objects = n_objs;
-	assert(ObjectState.num_objects > 0);
-	auto &Objects = ObjectState.get_objects();
-	assert(ObjectState.num_objects < Objects.size());
+	LevelUniqueObjectState.Debris_object_count = 0;
+	LevelUniqueObjectState.num_objects = n_objs;
+	assert(LevelUniqueObjectState.num_objects > 0);
+	auto &Objects = LevelUniqueObjectState.get_objects();
+	assert(LevelUniqueObjectState.num_objects < Objects.size());
 	Objects.set_count(n_objs);
 
 	for (objnum_t i = n_objs; i < MAX_OBJECTS; ++i)
 	{
-		ObjectState.free_obj_list[i] = i;
+		LevelUniqueObjectState.free_obj_list[i] = i;
 		auto &obj = *Objects.vmptr(i);
 		DXX_POISON_VAR(obj, 0xfd);
 		obj.type = OBJ_NONE;
@@ -1980,28 +2048,29 @@ void reset_objects(d_level_object_state &ObjectState, const unsigned n_objs)
 }
 
 //Tries to find a segment for an object, using find_point_seg()
-imsegptridx_t find_object_seg(const vmobjptr_t obj)
+imsegptridx_t find_object_seg(const d_level_shared_segment_state &LevelSharedSegmentState, d_level_unique_segment_state &LevelUniqueSegmentState, const object_base &obj)
 {
-	return find_point_seg(obj->pos, vmsegptridx(obj->segnum));
+	auto &Segments = LevelUniqueSegmentState.get_segments();
+	return find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, obj.pos, Segments.vmptridx(obj.segnum));
 }
 
 
 //If an object is in a segment, set its segnum field and make sure it's
 //properly linked.  If not in any segment, returns 0, else 1.
 //callers should generally use find_vector_intersection()
-int update_object_seg(const vmobjptridx_t obj)
+int update_object_seg(fvmobjptr &vmobjptr, const d_level_shared_segment_state &LevelSharedSegmentState, d_level_unique_segment_state &LevelUniqueSegmentState, const vmobjptridx_t obj)
 {
-	auto newseg = find_object_seg(obj);
+	const auto &&newseg = find_object_seg(LevelSharedSegmentState, LevelUniqueSegmentState, obj);
 	if (newseg == segment_none)
 		return 0;
 
 	if ( newseg != obj->segnum )
-		obj_relink(vmobjptr, vmsegptr, obj, newseg);
+		obj_relink(vmobjptr, LevelUniqueSegmentState.get_segments().vmptr, obj, newseg);
 
 	return 1;
 }
 
-void set_powerup_id(object_base &o, powerup_type_t id)
+void set_powerup_id(const d_powerup_info_array &Powerup_info, const d_vclip_array &Vclip, object_base &o, powerup_type_t id)
 {
 	o.id = id;
 	o.size = Powerup_info[id].size;
@@ -2013,14 +2082,21 @@ void set_powerup_id(object_base &o, powerup_type_t id)
 //go through all objects and make sure they have the correct segment numbers
 void fix_object_segs()
 {
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	range_for (const auto &&o, vmobjptridx)
 	{
 		if (o->type != OBJ_NONE)
-			if (update_object_seg(o) == 0) {
+		{
+			const auto oldsegnum = o->segnum;
+			if (update_object_seg(vmobjptr, LevelSharedSegmentState, LevelUniqueSegmentState, o) == 0)
+			{
 				const auto pos = o->pos;
-				compute_segment_center(vcvertptr, o->pos, vcsegptr(o->segnum));
-				con_printf(CON_URGENT, "Object %hu claims segment %u, but has position {%i,%i,%i}; moving to {%i,%i,%i}", static_cast<objnum_t>(o), o->segnum, pos.x, pos.y, pos.z, o->pos.x, o->pos.y, o->pos.z);
+				const auto segnum = o->segnum;
+				compute_segment_center(vcvertptr, o->pos, vcsegptr(segnum));
+				con_printf(CON_URGENT, "Object %hu claims segment %hu, but has position {%i,%i,%i}; moving to %hu:{%i,%i,%i}", o.get_unchecked_index(), oldsegnum, pos.x, pos.y, pos.z, segnum, o->pos.x, o->pos.y, o->pos.z);
 			}
+		}
 	}
 }
 
@@ -2085,9 +2161,8 @@ void clear_transient_objects(int clear_all)
 		if (object_is_clearable_weapon(Weapon_info, obj, clear_all) ||
 			 obj->type == OBJ_FIREBALL ||
 			 obj->type == OBJ_DEBRIS ||
-			 obj->type == OBJ_DEBRIS ||
 			 (obj->type!=OBJ_NONE && obj->flags & OF_EXPLODING)) {
-			obj_delete(obj);
+			obj_delete(LevelUniqueObjectState, Segments, obj);
 		}
 	}
 }
@@ -2160,28 +2235,39 @@ static void obj_detach_all(object_array &Objects, object_base &parent)
 imobjptridx_t drop_marker_object(const vms_vector &pos, const vmsegptridx_t segnum, const vms_matrix &orient, int marker_num)
 {
 	Assert(Marker_model_num != -1);
-	auto obj = obj_create(OBJ_MARKER, marker_num, segnum, pos, &orient, Polygon_models[Marker_model_num].rad, CT_NONE, MT_NONE, RT_POLYOBJ);
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
+	const auto &&obj = obj_create(OBJ_MARKER, marker_num, segnum, pos, &orient, Polygon_models[Marker_model_num].rad, CT_NONE, MT_SPINNING, RT_POLYOBJ);
 	if (obj != object_none) {
-		obj->rtype.pobj_info.model_num = Marker_model_num;
+		auto &o = *obj;
+		o.rtype.pobj_info.model_num = Marker_model_num;
 
-		vm_vec_copy_scale(obj->mtype.spin_rate,obj->orient.uvec,F1_0/2);
+		constexpr fix scale = F1_0 / 2;
+		const auto oi = obj.get_unchecked_index();
+		auto &spin_vec = o.mtype.spin_rate;
+		spin_vec = {};
+		if (oi & 1)
+			vm_vec_scale_add2(spin_vec, o.orient.fvec, (oi & 8) ? scale : -scale);
+		if (oi & 2)
+			vm_vec_scale_add2(spin_vec, o.orient.uvec, (oi & 16) ? scale : -scale);
+		if (oi & 4)
+			vm_vec_scale_add2(spin_vec, o.orient.rvec, (oi & 32) ? scale : -scale);
 
 		//	MK, 10/16/95: Using lifeleft to make it flash, thus able to trim lightlevel from all objects.
-		obj->lifeleft = IMMORTAL_TIME - 1;
+		o.lifeleft = IMMORTAL_TIME - 1;
 	}
 	return obj;	
 }
 
 //	*viewer is a viewer, probably a missile.
 //	wake up all robots that were rendered last frame subject to some constraints.
-void wake_up_rendered_objects(const vmobjptr_t viewer, window_rendered_data &window)
+void wake_up_rendered_objects(const object &viewer, window_rendered_data &window)
 {
 	//	Make sure that we are processing current data.
 	if (timer_query() != window.time) {
 		return;
 	}
 
-	Ai_last_missile_camera = viewer;
+	Ai_last_missile_camera = &viewer;
 
 	range_for (const auto objnum, window.rendered_robots)
 	{
@@ -2190,7 +2276,8 @@ void wake_up_rendered_objects(const vmobjptr_t viewer, window_rendered_data &win
 			const auto &&objp = vmobjptr(objnum);
 	
 			if (objp->type == OBJ_ROBOT) {
-				if (vm_vec_dist_quick(viewer->pos, objp->pos) < F1_0*100) {
+				if (vm_vec_dist_quick(viewer.pos, objp->pos) < F1_0*100)
+				{
 					ai_local		*ailp = &objp->ctype.ai_info.ail;
 					if (ailp->player_awareness_type == player_awareness_type_t::PA_NONE) {
 						objp->ctype.ai_info.SUB_FLAGS |= SUB_FLAGS_CAMERA_AWAKE;

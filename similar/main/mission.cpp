@@ -73,20 +73,78 @@ using std::min;
 
 namespace {
 
+struct mle;
 using mission_candidate_search_path = array<char, PATH_MAX>;
+using mission_list_type = std::vector<mle>;
 
 //mission list entry
 struct mle : Mission_path
 {
 	int     builtin_hogsize;    // if it's the built-in mission, used for determining the version
-	ntstring<MISSION_NAME_LEN> mission_name;
+	ntstring<75> mission_name;
 #if defined(DXX_BUILD_DESCENT_II)
 	descent_version_type descent_version;    // descent 1 or descent 2?
 #endif
 	ubyte   anarchy_only_flag;  // if true, mission is anarchy only
+	mission_list_type directory;
+	mle(Mission_path &&m) :
+		Mission_path(std::move(m))
+	{
+	}
+	mle(const char *const name, std::vector<mle> &&d);
 };
 
-using mission_list_type = std::vector<mle>;
+struct mission_subdir_stats
+{
+	std::size_t immediate_directories = 0, immediate_missions = 0, total_missions = 0;
+	static std::size_t count_missions(const mission_list_type &directory)
+	{
+		std::size_t total_missions = 0;
+		range_for (auto &&i, directory)
+		{
+			if (i.directory.empty())
+				++ total_missions;
+			else
+				total_missions += count_missions(i.directory);
+		}
+		return total_missions;
+	}
+	void count(const mission_list_type &directory)
+	{
+		range_for (auto &&i, directory)
+		{
+			if (i.directory.empty())
+			{
+				++ total_missions;
+				++ immediate_missions;
+			}
+			else
+			{
+				++ immediate_directories;
+				total_missions += count_missions(i.directory);
+			}
+		}
+	}
+};
+
+const char *prepare_mission_list_count_dirbuf(array<char, 12> &dirbuf, const std::size_t immediate_directories)
+{
+	if (immediate_directories)
+	{
+		snprintf(dirbuf.data(), dirbuf.size(), "DIR:%zu; ", immediate_directories);
+		return dirbuf.data();
+	}
+	return "";
+}
+
+mle::mle(const char *const name, std::vector<mle> &&d) :
+	Mission_path(name, 0), directory(std::move(d))
+{
+	mission_subdir_stats ss;
+	ss.count(directory);
+	array<char, 12> dirbuf;
+	snprintf(mission_name.data(), mission_name.size(), "%s/ [%sMSN:L%zu;T%zu]", name, prepare_mission_list_count_dirbuf(dirbuf, ss.immediate_directories), ss.immediate_missions, ss.total_missions);
+}
 
 }
 
@@ -115,7 +173,7 @@ static int allocate_levels(void)
 //  Special versions of mission routines for d1 builtins
 //
 
-static int load_mission_d1(void)
+static const char *load_mission_d1()
 {
 	switch (PHYSFSX_fsize("descent.hog"))
 	{
@@ -129,7 +187,7 @@ static int load_mission_d1(void)
 			if (!allocate_levels())
 			{
 				Current_mission.reset();
-				return 0;
+				return "Failed to allocate level memory for Descent 1 shareware";
 			}
 	
 			//build level names
@@ -147,7 +205,7 @@ static int load_mission_d1(void)
 			if (!allocate_levels())
 			{
 				Current_mission.reset();
-				return 0;
+				return "Failed to allocate level memory for Descent 1 Mac shareware";
 			}
 			
 			//build level names
@@ -158,26 +216,39 @@ static int load_mission_d1(void)
 			break;
 		case D1_OEM_MISSION_HOGSIZE:
 		case D1_OEM_10_MISSION_HOGSIZE:
+			{
 			N_secret_levels = 1;
 	
-			Last_level = 15;
-			Last_secret_level = -1;
+			constexpr unsigned last_level = 15;
+			constexpr int last_secret_level = -1;
+			Last_level = last_level;
+			Last_secret_level = last_secret_level;
 	
 			if (!allocate_levels())
 			{
 				Current_mission.reset();
-				return 0;
+				return "Failed to allocate level memory for Descent 1 OEM";
 			}
 			
 			//build level names
-			for (int i=0; i < Last_level - 1; i++)
-				snprintf(&Level_names[i][0u], Level_names[i].size(), "level%02d.rdl", i+1);
-			snprintf(&Level_names[Last_level - 1][0u], Level_names[Last_level - 1].size(), "saturn%02d.rdl", Last_level);
-			for (int i=0; i < -Last_secret_level; i++)
-				snprintf(&Secret_level_names[i][0u], Secret_level_names[i].size(), "levels%1d.rdl", i+1);
+			for (unsigned i = 0; i < last_level - 1; ++i)
+			{
+				auto &ln = Level_names[i];
+				snprintf(&ln[0u], ln.size(), "level%02u.rdl", i + 1);
+			}
+			{
+				auto &ln = Level_names[last_level - 1];
+				snprintf(&ln[0u], ln.size(), "saturn%02d.rdl", last_level);
+			}
+			for (int i = 0; i < -last_secret_level; ++i)
+			{
+				auto &sn = Secret_level_names[i];
+				snprintf(&sn[0u], sn.size(), "levels%1d.rdl", i + 1);
+			}
 			Secret_level_table[0] = 10;
 			Briefing_text_filename = "briefsat.txb";
 			Ending_text_filename = BIMD1_ENDING_FILE_OEM;
+			}
 			break;
 		default:
 			Int3(); // fall through
@@ -185,31 +256,40 @@ static int load_mission_d1(void)
 		case D1_MISSION_HOGSIZE2:
 		case D1_10_MISSION_HOGSIZE:
 		case D1_MAC_MISSION_HOGSIZE:
+			{
 			N_secret_levels = 3;
 	
-			Last_level = BIMD1_LAST_LEVEL;
-			Last_secret_level = BIMD1_LAST_SECRET_LEVEL;
+			constexpr unsigned last_level = BIMD1_LAST_LEVEL;
+			constexpr int last_secret_level = BIMD1_LAST_SECRET_LEVEL;
+			Last_level = last_level;
+			Last_secret_level = last_secret_level;
 	
 			if (!allocate_levels())
 			{
 				Current_mission.reset();
-				return 0;
+				return "Failed to allocate level memory for Descent 1";
 			}
 
 			//build level names
-			for (int i=0;i<Last_level;i++)
-				snprintf(&Level_names[i][0u], Level_names[i].size(), "level%02d.rdl", i+1);
-			for (int i=0;i<-Last_secret_level;i++)
-				snprintf(&Secret_level_names[i][0u], Secret_level_names[i].size(), "levels%1d.rdl", i+1);
+			for (unsigned i = 0; i < last_level; ++i)
+			{
+				auto &ln = Level_names[i];
+				snprintf(&ln[0u], ln.size(), "level%02u.rdl", i + 1);
+			}
+			for (int i = 0; i < -last_secret_level; ++i)
+			{
+				auto &sn = Secret_level_names[i];
+				snprintf(&sn[0u], sn.size(), "levels%1d.rdl", i + 1);
+			}
 			Secret_level_table[0] = 10;
 			Secret_level_table[1] = 21;
 			Secret_level_table[2] = 24;
 			Briefing_text_filename = BIMD1_BRIEFING_FILE;
 			Ending_text_filename = "endreg.txb";
 			break;
+			}
 	}
-
-	return 1;
+	return nullptr;
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -217,7 +297,7 @@ static int load_mission_d1(void)
 //  Special versions of mission routines for shareware
 //
 
-static int load_mission_shareware(void)
+static const char *load_mission_shareware()
 {
     Current_mission->mission_name.copy_if(SHAREWARE_MISSION_NAME);
     Current_mission->descent_version = Mission::descent_version_type::descent2;
@@ -234,7 +314,7 @@ static int load_mission_shareware(void)
 			if (!allocate_levels())
 			{
 				Current_mission.reset();
-				return 0;
+				return "Failed to allocate level memory for Descent 2 Mac shareware";
 			}
 			
 			// mac demo is using the regular hog and rl2 files
@@ -255,14 +335,13 @@ static int load_mission_shareware(void)
 			if (!allocate_levels())
 			{
 				Current_mission.reset();
-				return 0;
+				return "Failed to allocate level memory for Descent 2 shareware";
 			}
 			Level_names[0] = "d2leva-1.sl2";
 			Level_names[1] = "d2leva-2.sl2";
 			Level_names[2] = "d2leva-3.sl2";
 	}
-
-	return 1;
+	return nullptr;
 }
 
 
@@ -270,7 +349,7 @@ static int load_mission_shareware(void)
 //  Special versions of mission routines for Diamond/S3 version
 //
 
-static int load_mission_oem(void)
+static const char *load_mission_oem()
 {
     Current_mission->mission_name.copy_if(OEM_MISSION_NAME);
     Current_mission->descent_version = Mission::descent_version_type::descent2;
@@ -284,7 +363,7 @@ static int load_mission_oem(void)
 	if (!allocate_levels())
 	{
 		Current_mission.reset();
-		return 0;
+		return "Failed to allocate level memory for Descent 2 OEM";
 	}
 	Level_names[0] = "d2leva-1.rl2";
 	Level_names[1] = "d2leva-2.rl2";
@@ -298,7 +377,7 @@ static int load_mission_oem(void)
 	Secret_level_names[1] = "d2levb-s.rl2";
 	Secret_level_table[0] = 1;
 	Secret_level_table[1] = 5;
-	return 1;
+	return nullptr;
 }
 #endif
 
@@ -326,7 +405,7 @@ static char *get_value(char *buf)
 }
 
 //reads a line, returns ptr to value of passed parm.  returns NULL if none
-static char *get_parm_value(PHYSFSX_gets_line_t<80> &buf, const char *parm,PHYSFS_File *f)
+static char *get_parm_value(PHYSFSX_gets_line_t<80> &buf, const char *const parm, PHYSFS_File *const f)
 {
 	if (!PHYSFSX_fgets(buf,f))
 		return NULL;
@@ -346,29 +425,27 @@ static bool ml_sort_func(const mle &e0,const mle &e1)
 namespace dsx {
 static int read_mission_file(mission_list_type &mission_list, mission_candidate_search_path &pathname)
 {
-	if (auto mfile = PHYSFSX_openReadBuffered(pathname.data()))
+	if (const auto mfile = PHYSFSX_openReadBuffered(pathname.data()))
 	{
-		char *p;
-		char *ext;
-		p = strrchr(pathname.data(), '/');
-		if (!p)
-			p = pathname.data();
-		if ((ext = strchr(p, '.')) == NULL)
+		std::string str_pathname = pathname.data();
+		const auto idx_last_slash = str_pathname.find_last_of('/');
+		const auto idx_filename = (idx_last_slash == str_pathname.npos) ? 0 : idx_last_slash + 1;
+		const auto idx_file_extension = str_pathname.find_first_of('.', idx_filename);
+		if (idx_file_extension == str_pathname.npos)
 			return 0;	//missing extension
-		mission_list.emplace_back();
+		str_pathname.resize(idx_file_extension);
+		mission_list.emplace_back(Mission_path(std::move(str_pathname), idx_filename));
 		mle *mission = &mission_list.back();
-		mission->path.assign(pathname.data(), ext);
 #if defined(DXX_BUILD_DESCENT_II)
 		// look if it's .mn2 or .msn
-		mission->descent_version = (ext[3] == MISSION_EXTENSION_DESCENT_II[3])
+		mission->descent_version = (pathname[idx_file_extension + 3] == MISSION_EXTENSION_DESCENT_II[3])
 			? Mission::descent_version_type::descent2
 			: Mission::descent_version_type::descent1;
 #endif
 		mission->anarchy_only_flag = 0;
-		mission->filename = next(begin(mission->path), mission->path.find_last_of('/') + 1);
 
 		PHYSFSX_gets_line_t<80> buf;
-		p = get_parm_value(buf, "name",mfile);
+		auto p = get_parm_value(buf, "name",mfile);
 
 #if defined(DXX_BUILD_DESCENT_II)
 		if (!p) {		//try enhanced mission
@@ -430,19 +507,17 @@ static void add_d1_builtin_mission_to_list(mission_list_type &mission_list)
 	if (size == -1)
 		return;
 
-	mission_list.emplace_back();
+	mission_list.emplace_back(Mission_path(D1_MISSION_FILENAME, 0));
 	mle *mission = &mission_list.back();
 	switch (size) {
 	case D1_SHAREWARE_MISSION_HOGSIZE:
 	case D1_SHAREWARE_10_MISSION_HOGSIZE:
 	case D1_MAC_SHARE_MISSION_HOGSIZE:
-		mission->path = D1_MISSION_FILENAME;
 		mission->mission_name.copy_if(D1_SHAREWARE_MISSION_NAME);
 		mission->anarchy_only_flag = 0;
 		break;
 	case D1_OEM_MISSION_HOGSIZE:
 	case D1_OEM_10_MISSION_HOGSIZE:
-		mission->path = D1_MISSION_FILENAME;
 		mission->mission_name.copy_if(D1_OEM_MISSION_NAME);
 		mission->anarchy_only_flag = 0;
 		break;
@@ -454,7 +529,6 @@ static void add_d1_builtin_mission_to_list(mission_list_type &mission_list)
 	case D1_MISSION_HOGSIZE2:
 	case D1_10_MISSION_HOGSIZE:
 	case D1_MAC_MISSION_HOGSIZE:
-		mission->path = D1_MISSION_FILENAME;
 		mission->mission_name.copy_if(D1_MISSION_NAME);
 		mission->anarchy_only_flag = 0;
 		break;
@@ -467,7 +541,6 @@ static void add_d1_builtin_mission_to_list(mission_list_type &mission_list)
 	mission->descent_version = Mission::descent_version_type::descent1;
 	mission->builtin_hogsize = 0;
 #endif
-	mission->filename = begin(mission->path);
 }
 }
 
@@ -475,10 +548,8 @@ static void add_d1_builtin_mission_to_list(mission_list_type &mission_list)
 template <std::size_t N1, std::size_t N2>
 static void set_hardcoded_mission(mission_list_type &mission_list, const char (&path)[N1], const char (&mission_name)[N2])
 {
-	mission_list.emplace_back();
+	mission_list.emplace_back(Mission_path(path, 0));
 	mle *mission = &mission_list.back();
-	mission->path = path;
-	mission->filename = begin(mission->path);
 	mission->mission_name.copy_if(mission_name);
 	mission->anarchy_only_flag = 0;
 }
@@ -520,7 +591,8 @@ static void add_builtin_mission_to_list(mission_list_type &mission_list, d_fname
 #endif
 
 namespace dsx {
-static void add_missions_to_list(mission_list_type &mission_list, mission_candidate_search_path &path, const mission_candidate_search_path::iterator rel_path, int anarchy_mode)
+
+static void add_missions_to_list(mission_list_type &mission_list, mission_candidate_search_path &path, const mission_candidate_search_path::iterator rel_path, const int anarchy_mode)
 {
 	/* rel_path must point within the array `path`.
 	 * rel_path must point to the null that follows a possibly empty
@@ -551,8 +623,25 @@ static void add_missions_to_list(mission_list_type &mission_list, mission_candid
 			auto null = std::prev(j);
 			*j = 0;
 			*null = '/';
-			add_missions_to_list(mission_list, path, j, anarchy_mode);
+			mission_list_type sublist;
+			add_missions_to_list(sublist, path, j, anarchy_mode);
 			*null = 0;
+			const auto found = sublist.size();
+			if (!found)
+			{
+				/* Ignore empty directories */
+			}
+			else if (found == 1)
+			{
+				/* If only one found, promote it up to the next level so
+				 * the user does not need to navigate into a
+				 * single-element directory.
+				 */
+				auto &sli = sublist.front();
+				mission_list.emplace_back(std::move(sli));
+			}
+			else
+				mission_list.emplace_back(path.data(), std::move(sublist));
 		}
 		else if (il > 5 &&
 			((ext = &i[il - 5], !d_strnicmp(ext, MISSION_EXTENSION_DESCENT_I))
@@ -585,7 +674,9 @@ static void promote (mission_list_type &mission_list, const char *const name, st
 	range_for (auto &i, partial_range(mission_list, top_place, mission_list.size()))
 		if (!d_stricmp(&*i.filename, name)) {
 			//swap mission positions
-			std::swap(mission_list[top_place++], i);
+			auto &j = mission_list[top_place++];
+			if (&j != &i)
+				std::swap(j, i);
 			break;
 		}
 }
@@ -731,21 +822,21 @@ static void record_briefing(d_fname &f, array<char, PATH_MAX> &buf)
 //build_mission_list() must have been called.
 //Returns true if mission loaded ok, else false.
 namespace dsx {
-static int load_mission(const mle *mission)
+
+static const char *load_mission(const mle *const mission)
 {
 	char *v;
 
 #if defined(DXX_BUILD_DESCENT_II)
 	close_extra_robot_movie();
 #endif
-	Current_mission = make_unique<Mission>();
+	Current_mission = make_unique<Mission>(static_cast<const Mission_path &>(*mission));
 	Current_mission->builtin_hogsize = mission->builtin_hogsize;
-	Current_mission->mission_name = mission->mission_name;
+	Current_mission->mission_name.copy_if(mission->mission_name);
 #if defined(DXX_BUILD_DESCENT_II)
 	Current_mission->descent_version = mission->descent_version;
 #endif
 	Current_mission->anarchy_only_flag = mission->anarchy_only_flag;
-	*static_cast<Mission_path *>(Current_mission.get()) = *mission;
 	Current_mission->n_secret_levels = 0;
 #if defined(DXX_BUILD_DESCENT_II)
 	Current_mission->alternate_ham_file = NULL;
@@ -818,7 +909,7 @@ static int load_mission(const mle *mission)
 	auto &&mfile = PHYSFSX_openReadBuffered(mission_filename.data());
 	if (!mfile) {
 		Current_mission.reset();
-		return 0;		//error!
+		return "Failed to open mission file";		//error!
 	}
 
 	//for non-builtin missions, load HOG
@@ -827,7 +918,7 @@ static int load_mission(const mle *mission)
 	if (!PLAYING_BUILTIN_MISSION)
 #endif
 	{
-		strcpy(mission_filename.data() + strlen(mission_filename.data()) - 3, "hog");		//change extension
+		strcpy(&mission_filename[mission->path.size() + 1], "hog");		//change extension
 			PHYSFSX_contfile_init(mission_filename.data(), 0);
 		set_briefing_filename(Briefing_text_filename, Current_mission_filename);
 		Ending_text_filename = Briefing_text_filename;
@@ -981,7 +1072,7 @@ static int load_mission(const mle *mission)
 	mfile.reset();
 	if (Last_level <= 0) {
 		Current_mission.reset();		//no valid mission loaded
-		return 0;
+		return "Failed to parse mission file";
 	}
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -991,17 +1082,17 @@ static int load_mission(const mle *mission)
 	if (load_mission_ham())
 		init_extra_robot_movie(Current_mission_filename);
 #endif
-
-	return 1;
+	return nullptr;
 }
+
 }
 
 //loads the named mission if exists.
-//Returns true if mission loaded ok, else false.
-int load_mission_by_name(const char *mission_name)
+//Returns nullptr if mission loaded ok, else error string.
+const char *load_mission_by_name(const char *const mission_name)
 {
 	auto mission_list = build_mission_list(1);
-	bool found = 0;
+	const char *found = nullptr;
 
 	range_for (auto &i, mission_list)
 		if (!d_stricmp(mission_name, &*i.filename))
@@ -1012,38 +1103,123 @@ int load_mission_by_name(const char *mission_name)
 	return found;
 }
 
-struct mission_menu
+namespace {
+
+class mission_menu
 {
+	mission_list_type mls;
+public:
+	static constexpr char listbox_go_up[] = "<..>";
 	using callback_type = window_event_result (*)(void);
-	mission_list_type ml;
-	std::unique_ptr<const char *[]> mission_names;
-	callback_type when_selected;
-	mission_menu(mission_list_type &&rml, std::unique_ptr<const char *[]> &&mn, const callback_type ws) :
-		ml(std::move(rml)), mission_names(std::move(mn)), when_selected(ws)
+	const mission_list_type &ml;
+	const std::unique_ptr<const char *[]> listbox_strings;
+	const RAIIdmem<char[]> title;
+	const callback_type when_selected;
+	listbox *containing_listbox = nullptr;
+	mission_menu *parent = nullptr;
+	mission_menu(mission_list_type &&rml, std::unique_ptr<const char *[]> &&mn, const char *const message, const callback_type ws) :
+		mls(std::move(rml)), ml(mls), listbox_strings(std::move(mn)),
+		title(prepare_title(message, ml)), when_selected(ws)
 	{
+	}
+	mission_menu(const mission_list_type *const p, std::unique_ptr<const char *[]> &&mn, const char *const message, const callback_type ws, mission_menu *const parent_menu) :
+		ml(*p), listbox_strings(std::move(mn)),
+		title(prepare_title(message, ml)), when_selected(ws),
+		parent(parent_menu)
+	{
+	}
+	bool is_submenu() const
+	{
+		return parent != nullptr;
+	}
+	static RAIIdmem<char[]> prepare_title(const char *const message, const mission_list_type &ml)
+	{
+		mission_subdir_stats ss;
+		ss.count(ml);
+		array<char, 12> dirbuf;
+		char buf[128];
+		snprintf(buf, sizeof(buf), "%s\n[%sMSN:LOCAL %zu; TOTAL %zu]", message, prepare_mission_list_count_dirbuf(dirbuf, ss.immediate_directories), ss.immediate_missions, ss.total_missions);
+		return RAIIdmem<char[]>(d_strdup(buf));
 	}
 };
 
-static window_event_result mission_menu_handler(listbox *, const d_event &event, mission_menu *const mm)
+constexpr char mission_menu::listbox_go_up[];
+
+struct mission_menu_create_state
+{
+	std::unique_ptr<const char *[]> listbox_strings;
+	unsigned initial_selection = UINT_MAX;
+	std::unique_ptr<mission_menu_create_state> submenu;
+	mission_menu_create_state(const std::size_t len) :
+		listbox_strings(make_unique<const char *[]>(len))
+	{
+	}
+	mission_menu_create_state(mission_menu_create_state &&) = default;
+};
+
+}
+
+static window_event_result mission_menu_handler(listbox *const lb, const d_event &event, mission_menu *const mm)
 {
 	switch (event.type)
 	{
+		case EVENT_WINDOW_CREATED:
+			mm->containing_listbox = lb;
+			break;
 		case EVENT_NEWMENU_SELECTED:
 		{
-			auto &citem = static_cast<const d_select_event &>(event).citem;
+			const auto raw_citem = static_cast<const d_select_event &>(event).citem;
+			auto citem = raw_citem;
+			if (mm->is_submenu())
+			{
+				if (citem == 0)
+				{
+					/* Clear parent pointer so that the parent window is
+					 * not implicitly closed during handling of
+					 * EVENT_WINDOW_CLOSE.
+					 */
+					mm->parent = nullptr;
+					return window_event_result::close;
+				}
+				/* Adjust for the "Go up" placeholder item */
+				-- citem;
+			}
 			if (citem >= 0)
 			{
-				// Chose a mission
-				if (!load_mission(&mm->ml[citem]))
+				auto &mli = mm->ml[citem];
+				if (!mli.directory.empty())
 				{
-					nm_messagebox( NULL, 1, TXT_OK, TXT_MISSION_ERROR);
+					auto listbox_strings = make_unique<const char *[]>(mli.directory.size() + 1);
+					listbox_strings[0] = mm->listbox_go_up;
+					const auto a = [](const mle &m) -> const char * {
+						return m.mission_name;
+					};
+					std::transform(mli.directory.begin(), mli.directory.end(), &listbox_strings[1], a);
+					const auto pls = listbox_strings.get();
+					auto submm = make_unique<mission_menu>(&mli.directory, std::move(listbox_strings), mli.path.c_str(), mm->when_selected, mm);
+					const auto pmm = submm.get();
+					newmenu_listbox1(pmm->title.get(), pmm->ml.size() + 1, pls, 1, 0, mission_menu_handler, std::move(submm));
+					return window_event_result::handled;
+				}
+				// Chose a mission
+				else if (const auto errstr = load_mission(&mli))
+				{
+					nm_messagebox(nullptr, 1, TXT_OK, "%s\n\n%s\n\n%s", TXT_MISSION_ERROR, errstr, mli.path.c_str());
 					return window_event_result::handled;	// stay in listbox so user can select another one
 				}
-				CGameCfg.LastMission.copy_if(mm->mission_names[citem]);
+				CGameCfg.LastMission.copy_if(mm->listbox_strings[raw_citem]);
 			}
 			return (*mm->when_selected)();
 		}
 		case EVENT_WINDOW_CLOSE:
+			/* If the user dismisses the listbox by pressing ESCAPE,
+			 * do not close the parent listbox.
+			 */
+			if (listbox_get_citem(lb) != -1)
+				if (const auto parent = mm->parent)
+				{
+					window_close(listbox_get_window(parent->containing_listbox));
+				}
 			std::default_delete<mission_menu>()(mm);
 			break;
 		default:
@@ -1053,6 +1229,39 @@ static window_event_result mission_menu_handler(listbox *, const d_event &event,
 	return window_event_result::ignored;
 }
 
+using mission_menu_create_state_ptr = std::unique_ptr<mission_menu_create_state>;
+
+static mission_menu_create_state_ptr prepare_mission_menu_state(const mission_list_type &mission_list, const char *const LastMission, const std::size_t extra_strings)
+{
+	auto mission_name_to_select = LastMission;
+	auto p = make_unique<mission_menu_create_state>(mission_list.size() + extra_strings);
+	auto &create_state = *p.get();
+	auto listbox_strings = create_state.listbox_strings.get();
+	std::fill_n(listbox_strings, extra_strings, nullptr);
+	listbox_strings += extra_strings;
+	range_for (auto &&e, enumerate(mission_list))
+	{
+		auto &mli = e.value;
+		const char *const mission_name = mli.mission_name;
+		*listbox_strings++ = mission_name;
+		if (!mission_name_to_select)
+			continue;
+		if (!mli.directory.empty())
+		{
+			auto &&substate = prepare_mission_menu_state(mli.directory, mission_name_to_select, 1);
+			if (substate->initial_selection == UINT_MAX)
+				continue;
+			substate->listbox_strings[0] = mission_menu::listbox_go_up;
+			create_state.submenu = std::move(substate);
+		}
+		else if (strcmp(mission_name, mission_name_to_select))
+			continue;
+		create_state.initial_selection = e.idx;
+		mission_name_to_select = nullptr;
+	}
+	return p;
+}
+
 int select_mission(int anarchy_mode, const char *message, window_event_result (*when_selected)(void))
 {
 	auto mission_list = build_mission_list(anarchy_mode);
@@ -1060,33 +1269,34 @@ int select_mission(int anarchy_mode, const char *message, window_event_result (*
 
     if (mission_list.size() <= 1)
 	{
-        new_mission_num = !mission_list.empty() && load_mission(&mission_list.front()) ? 0 : -1;
+        new_mission_num = !mission_list.empty() && !load_mission(&mission_list.front()) ? 0 : -1;
 		(*when_selected)();
 		
 		return (new_mission_num >= 0);
     }
 	else
 	{
-		auto m = make_unique<const char *[]>(mission_list.size());
-		unsigned default_mission = 0;
-		const char *LastMission = CGameCfg.LastMission;
-		range_for (auto &&e, enumerate(mission_list))
+		auto &&create_state_ptr = prepare_mission_menu_state(mission_list, CGameCfg.LastMission, 0);
+		auto &create_state = *create_state_ptr.get();
+		mission_menu *parent_mission_menu;
 		{
-			const uint_fast32_t i = e.idx;
-			auto &mli = e.value;
-			const char *const mission_name = mli.mission_name;
-			m[i] = mission_name;
-			if (LastMission && !strcmp(mission_name, LastMission))
-			{
-				LastMission = nullptr;
-                default_mission = i;
-			}
-        }
-
-		const auto pm = m.get();
-		auto mm = make_unique<mission_menu>(std::move(mission_list), std::move(m), when_selected);
-		auto pmm = mm.get();
-		newmenu_listbox1( message, pmm->ml.size(), pm, 1, default_mission, mission_menu_handler, std::move(mm));
+			auto mm = make_unique<mission_menu>(std::move(mission_list), std::move(create_state.listbox_strings), message, when_selected);
+			parent_mission_menu = mm.get();
+			newmenu_listbox1(message, parent_mission_menu->ml.size(), parent_mission_menu->listbox_strings.get(), 1, create_state.initial_selection == UINT_MAX ? 0 : create_state.initial_selection, mission_menu_handler, std::move(mm));
+		}
+		for (auto parent_state = &create_state; const auto substate = parent_state->submenu.get(); parent_state = substate)
+		{
+			const auto parent_initial_selection = parent_state->initial_selection;
+			const auto parent_mission_list_size = parent_mission_menu->ml.size();
+			assert(parent_initial_selection < parent_mission_list_size);
+			if (parent_initial_selection >= parent_mission_list_size)
+				break;
+			const auto &substate_mission_list = parent_mission_menu->ml[parent_initial_selection];
+			auto mm = make_unique<mission_menu>(&substate_mission_list.directory, std::move(substate->listbox_strings), substate_mission_list.path.c_str(), when_selected, parent_mission_menu);
+			const auto pmm = mm.get();
+			parent_mission_menu = pmm;
+			newmenu_listbox1(pmm->title.get(), pmm->ml.size() + 1, pmm->listbox_strings.get(), 1, substate->initial_selection + 1, mission_menu_handler, std::move(mm));
+		}
     }
 
     return 1;	// presume success
@@ -1166,11 +1376,8 @@ static int write_mission(void)
 
 void create_new_mission(void)
 {
-	Current_mission = make_unique<Mission>();
-	*Current_mission = {};
+	Current_mission = make_unique<Mission>(Mission_path(MISSION_DIR "new_miss", sizeof(MISSION_DIR) - 1));		// limited to eight characters because of savegame format
 	Current_mission->mission_name.copy_if("Untitled");
-	Current_mission->path = MISSION_DIR "new_miss";		// limited to eight characters because of savegame format
-	Current_mission->filename = next(begin(Current_mission->path), sizeof(MISSION_DIR) - 1);
 	Current_mission->builtin_hogsize = 0;
 	Current_mission->anarchy_only_flag = 0;
 	

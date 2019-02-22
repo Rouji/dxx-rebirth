@@ -57,7 +57,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "compiler-range_for.h"
 #include "partial_range.h"
 
-static int wall_add_to_side(const vmsegptridx_t segp, int side, sbyte type);
+static int wall_add_to_side(fvcvertptr &vcvertptr, wall_array &Walls, const vmsegptridx_t segp, unsigned side, unsigned type);
 
 //-------------------------------------------------------------------------
 // Variables for this module...
@@ -92,25 +92,29 @@ static window_event_result wall_dialog_handler(UI_DIALOG *dlg,const d_event &eve
 
 //---------------------------------------------------------------------
 // Add a wall (removable 2 sided)
-static int add_wall(const vmsegptridx_t seg, short side)
+static int add_wall(fvcvertptr &vcvertptr, wall_array &Walls, const vmsegptridx_t seg, const unsigned side)
 {
-	if (Num_walls < MAX_WALLS-2)
+	if (Walls.get_count() < MAX_WALLS-2)
   	if (IS_CHILD(seg->children[side])) {
-		if (seg->sides[side].wall_num == wall_none) {
- 			seg->sides[side].wall_num = Num_walls;
-			Walls.set_count(Num_walls + 1);
+		shared_segment &sseg = seg;
+		auto &side0 = sseg.sides[side];
+		if (side0.wall_num == wall_none) {
+ 			side0.wall_num = Walls.get_count();
+			Walls.set_count(Walls.get_count() + 1);
 			}
 				 
 		const auto &&csegp = seg.absolute_sibling(seg->children[side]);
 		auto Connectside = find_connect_side(seg, csegp);
 
-		if (csegp->sides[Connectside].wall_num == wall_none) {
-			csegp->sides[Connectside].wall_num = Num_walls;
-			Walls.set_count(Num_walls + 1);
+		shared_segment &scseg = csegp;
+		auto &side1 = scseg.sides[Connectside];
+		if (side1.wall_num == wall_none) {
+			side1.wall_num = Walls.get_count();
+			Walls.set_count(Walls.get_count() + 1);
 			}
 		
-		create_removable_wall( seg, side, CurrentTexture );
-		create_removable_wall( csegp, Connectside, CurrentTexture );
+		create_removable_wall(vcvertptr, seg, side, CurrentTexture);
+		create_removable_wall(vcvertptr, csegp, Connectside, CurrentTexture);
 
 		return 1;
 		}
@@ -120,12 +124,16 @@ static int add_wall(const vmsegptridx_t seg, short side)
 
 static int wall_assign_door(int door_type)
 {
-	if (Cursegp->sides[Curside].wall_num == wall_none) {
+	shared_segment &sseg = Cursegp;
+	unique_segment &useg = Cursegp;
+	if (sseg.sides[Curside].wall_num == wall_none) {
 		editor_status("Cannot assign door. No wall at Curside.");
 		return 0;
 	}
 
-	auto &wall0 = *vmwallptr(Cursegp->sides[Curside].wall_num);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vmwallptr = Walls.vmptr;
+	auto &wall0 = *vmwallptr(sseg.sides[Curside].wall_num);
 	if (wall0.type != WALL_DOOR && wall0.type != WALL_BLASTABLE)
 	{
 		editor_status("Cannot assign door. No door at Curside.");
@@ -134,21 +142,23 @@ static int wall_assign_door(int door_type)
 
 	Current_door_type = door_type;
 
-	const auto &&csegp = vmsegptr(Cursegp->children[Curside]);
+	auto &csegp = *vmsegptr(Cursegp->children[Curside]);
 	auto Connectside = find_connect_side(Cursegp, csegp);
 	
  	wall0.clip_num = door_type;
-	vmwallptr(csegp->sides[Connectside].wall_num)->clip_num = door_type;
+	shared_segment &scseg = csegp;
+	unique_segment &ucseg = csegp;
+	vmwallptr(scseg.sides[Connectside].wall_num)->clip_num = door_type;
 
 	if (WallAnims[door_type].flags & WCF_TMAP1) {
-		Cursegp->sides[Curside].tmap_num = WallAnims[door_type].frames[0];
-		csegp->sides[Connectside].tmap_num = WallAnims[door_type].frames[0];
-		Cursegp->sides[Curside].tmap_num2 = 0;
-		csegp->sides[Connectside].tmap_num2 = 0;
+		useg.sides[Curside].tmap_num = WallAnims[door_type].frames[0];
+		ucseg.sides[Connectside].tmap_num = WallAnims[door_type].frames[0];
+		useg.sides[Curside].tmap_num2 = 0;
+		ucseg.sides[Connectside].tmap_num2 = 0;
 	}
 	else {
-		Cursegp->sides[Curside].tmap_num2 = WallAnims[door_type].frames[0];
-		csegp->sides[Connectside].tmap_num2 = WallAnims[door_type].frames[0];
+		useg.sides[Curside].tmap_num2 = WallAnims[door_type].frames[0];
+		ucseg.sides[Connectside].tmap_num2 = WallAnims[door_type].frames[0];
 	}
 
 	Update_flags |= UF_WORLD_CHANGED;
@@ -157,17 +167,26 @@ static int wall_assign_door(int door_type)
 
 int wall_add_blastable()
 {
-	return wall_add_to_side(Cursegp, Curside, WALL_BLASTABLE);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	return wall_add_to_side(vcvertptr, Walls, Cursegp, Curside, WALL_BLASTABLE);
 }
 
 int wall_add_door()
 {
-	return wall_add_to_side(Cursegp, Curside, WALL_DOOR);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	return wall_add_to_side(vcvertptr, Walls, Cursegp, Curside, WALL_DOOR);
 }
 
 int wall_add_closed_wall()
 {
-	return wall_add_to_side(Cursegp, Curside, WALL_CLOSED);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	return wall_add_to_side(vcvertptr, Walls, Cursegp, Curside, WALL_CLOSED);
 }
 
 int wall_add_external_wall()
@@ -190,19 +209,26 @@ int wall_add_external_wall()
 
 int wall_add_illusion()
 {
-	return wall_add_to_side(Cursegp, Curside, WALL_ILLUSION);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	return wall_add_to_side(vcvertptr, Walls, Cursegp, Curside, WALL_ILLUSION);
 }
 
 static int GotoPrevWall() {
 	wallnum_t current_wall;
 
-	if (Cursegp->sides[Curside].wall_num == wall_none)
-		current_wall = Num_walls;
+	shared_segment &sseg = Cursegp;
+	auto &side = sseg.sides[Curside];
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	if (side.wall_num == wall_none)
+		current_wall = Walls.get_count();
 	else
-		current_wall = Cursegp->sides[Curside].wall_num;
+		current_wall = side.wall_num;
 
 	current_wall--;
-	if (current_wall >= Num_walls) current_wall = Num_walls-1;
+	if (current_wall >= Walls.get_count()) current_wall = Walls.get_count()-1;
 
 	auto &w = *vcwallptr(current_wall);
 	if (w.segnum == segment_none)
@@ -223,11 +249,15 @@ static int GotoPrevWall() {
 
 
 static int GotoNextWall() {
-	auto current_wall = Cursegp->sides[Curside].wall_num; // It's ok to be -1 because it will immediately become 0
+	shared_segment &sseg = Cursegp;
+	auto &side = sseg.sides[Curside];
+	auto current_wall = side.wall_num; // It's ok to be -1 because it will immediately become 0
 
 	current_wall++;
 
-	if (current_wall >= Num_walls) current_wall = 0;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	if (current_wall >= Walls.get_count()) current_wall = 0;
 
 	auto &w = *vcwallptr(current_wall);
 	if (w.segnum == segment_none)
@@ -246,16 +276,18 @@ static int GotoNextWall() {
 	return 1;
 }
 
-
 static int PrevWall() {
 	int wall_type;
-
-	if (Cursegp->sides[Curside].wall_num == wall_none) {
+	const auto cur_wall_num = Cursegp->shared_segment::sides[Curside].wall_num;
+	if (cur_wall_num == wall_none)
+	{
 		editor_status("Cannot assign new wall. No wall on curside.");
 		return 0;
 	}
 
-	auto &w = *vcwallptr(Cursegp->sides[Curside].wall_num);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	auto &w = *vcwallptr(cur_wall_num);
 	wall_type = w.clip_num;
 
 	if (w.type == WALL_DOOR)
@@ -287,13 +319,16 @@ static int PrevWall() {
 
 static int NextWall() {
 	int wall_type;
-
-	if (Cursegp->sides[Curside].wall_num == wall_none) {
+	const auto cur_wall_num = Cursegp->shared_segment::sides[Curside].wall_num;
+	if (cur_wall_num == wall_none)
+	{
 		editor_status("Cannot assign new wall. No wall on curside.");
 		return 0;
 	}
 
-	auto &w = *vcwallptr(Cursegp->sides[Curside].wall_num);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	auto &w = *vcwallptr(cur_wall_num);
 	wall_type = w.clip_num;
 
 	if (w.type == WALL_DOOR)
@@ -412,7 +447,9 @@ window_event_result wall_dialog_handler(UI_DIALOG *dlg,const d_event &event, wal
 	//------------------------------------------------------------
 	ui_button_any_drawn = 0;
 
-	const auto &&w = imwallptridx(Cursegp->sides[Curside].wall_num);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &imwallptridx = Walls.imptridx;
+	const auto &&w = imwallptridx(Cursegp->shared_segment::sides[Curside].wall_num);
 	//------------------------------------------------------------
 	// If we change walls, we need to reset the ui code for all
 	// of the checkboxes that control the wall flags.  
@@ -515,11 +552,13 @@ window_event_result wall_dialog_handler(UI_DIALOG *dlg,const d_event &event, wal
 				if (type == WALL_OPEN)
 					gr_clear_canvas(*grd_curcanv, CBLACK);
 				else {
-					if (Cursegp->sides[Curside].tmap_num2 > 0)
-						gr_ubitmap(*grd_curcanv, texmerge_get_cached_bitmap( Cursegp->sides[Curside].tmap_num, Cursegp->sides[Curside].tmap_num2));
+					auto &curside = Cursegp->unique_segment::sides[Curside];
+					const auto tmap_num = curside.tmap_num;
+					if (curside.tmap_num2 > 0)
+						gr_ubitmap(*grd_curcanv, texmerge_get_cached_bitmap(tmap_num, curside.tmap_num2));
 					else	{
-						PIGGY_PAGE_IN(Textures[Cursegp->sides[Curside].tmap_num]);
-						gr_ubitmap(*grd_curcanv, GameBitmaps[Textures[Cursegp->sides[Curside].tmap_num].index]);
+						PIGGY_PAGE_IN(Textures[tmap_num]);
+						gr_ubitmap(*grd_curcanv, GameBitmaps[Textures[tmap_num].index]);
 					}
 				}
 			}
@@ -590,30 +629,37 @@ window_event_result wall_dialog_handler(UI_DIALOG *dlg,const d_event &event, wal
 // Restore all walls to original status (closed doors, repaired walls)
 int wall_restore_all()
 {
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	auto &vmwallptr = Walls.vmptr;
 	range_for (const auto &&wp, vmwallptr)
 	{
 		auto &w = *wp;
 		if (w.flags & WALL_BLASTED) {
 			w.hps = WALL_HPS;
 		}
-		w.flags &= ~(WALL_BLASTED | WALL_DOOR_OPENED | WALL_DOOR_OPENING);
+		w.flags &= ~(WALL_BLASTED | WALL_DOOR_OPENED | WALL_DOOR_OPENING | WALL_EXPLODING);
 	}
 
-	range_for (auto &&i, vmactdoorptr)
-		wall_close_door_ref(i);
+	auto &ActiveDoors = LevelUniqueWallSubsystemState.ActiveDoors;
+	range_for (auto &&i, ActiveDoors.vmptr)
+		wall_close_door_ref(Segments.vmptridx, Walls, WallAnims, i);
 
 	range_for (auto &&i, vmsegptr)
-		range_for (auto &j, i->sides)
+		range_for (auto &&e, enumerate(i->shared_segment::sides))	// d_zip
 		{
+			auto &j = e.value;
 			const auto wall_num = j.wall_num;
 			if (wall_num != wall_none)
 			{
 				auto &w = *vcwallptr(wall_num);
 				if (w.type == WALL_BLASTABLE || w.type == WALL_DOOR)
-					j.tmap_num2 = WallAnims[w.clip_num].frames[0];
+					i->unique_segment::sides[e.idx].tmap_num2 = WallAnims[w.clip_num].frames[0];
 			}
  		}
 
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vmtrgptr = Triggers.vmptr;
 	range_for (const auto i, vmtrgptr)
 		i->flags |= TRIGGER_ON;
 	
@@ -626,9 +672,9 @@ int wall_restore_all()
 //	Remove a specific side.
 int wall_remove_side(const vmsegptridx_t seg, short side)
 {
-	if (IS_CHILD(seg->children[side]) && seg->sides[side].wall_num != wall_none)
+	if (IS_CHILD(seg->children[side]) && seg->shared_segment::sides[side].wall_num != wall_none)
 	{
-		const auto &&csegp = vmsegptr(seg->children[side]);
+		shared_segment &csegp = *vmsegptr(seg->children[side]);
 		const auto Connectside = find_connect_side(seg, csegp);
 
 		remove_trigger(seg, side);
@@ -636,10 +682,13 @@ int wall_remove_side(const vmsegptridx_t seg, short side)
 
 		// Remove walls 'wall_num' and connecting side 'wall_num'
 		//  from Walls array.  
-		const auto wall0 = seg->sides[side].wall_num;
-		const auto wall1 = csegp->sides[Connectside].wall_num;
+		const auto wall0 = seg->shared_segment::sides[side].wall_num;
+		const auto wall1 = csegp.sides[Connectside].wall_num;
 		const auto lower_wallnum = (wall0 < wall1) ? wall0 : wall1;
 
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
+		auto &vcwallptr = Walls.vcptr;
+		auto &vmwallptr = Walls.vmptr;
 		{
 			const auto linked_wall = vcwallptr(lower_wallnum)->linked_wall;
 			if (linked_wall != wall_none)
@@ -653,7 +702,7 @@ int wall_remove_side(const vmsegptridx_t seg, short side)
 		}
 
 		{
-			const auto num_walls = Num_walls;
+			const auto num_walls = Walls.get_count();
 			auto &&sr = partial_const_range(Walls, static_cast<wallnum_t>(lower_wallnum + 2), num_walls);
 			std::move(sr.begin(), sr.end(), partial_range(Walls, lower_wallnum, num_walls - 2).begin());
 			Walls.set_count(num_walls - 2);
@@ -662,12 +711,14 @@ int wall_remove_side(const vmsegptridx_t seg, short side)
 		range_for (const auto &&segp, vmsegptr)
 		{
 			if (segp->segnum != segment_none)
-				range_for (auto &w, segp->sides)
+				range_for (auto &w, segp->shared_segment::sides)
 					if (w.wall_num != wall_none && w.wall_num > lower_wallnum+1)
 						w.wall_num -= 2;
 		}
 
 		// Destroy any links to the deleted wall.
+		auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+		auto &vmtrgptr = Triggers.vmptr;
 		range_for (const auto vt, vmtrgptr)
 		{
 			auto &t = *vt;
@@ -691,8 +742,8 @@ int wall_remove_side(const vmsegptridx_t seg, short side)
 				ControlCenterTriggers.num_links--;	
 			}
 
-		seg->sides[side].wall_num = wall_none;
-		csegp->sides[Connectside].wall_num = wall_none;
+		seg->shared_segment::sides[side].wall_num = wall_none;
+		csegp.sides[Connectside].wall_num = wall_none;
 
 		Update_flags |= UF_WORLD_CHANGED;
 		return 1;
@@ -711,14 +762,15 @@ int wall_remove()
 
 //---------------------------------------------------------------------
 // Add a wall to curside
-static int wall_add_to_side(const vmsegptridx_t segp, int side, sbyte type)
+static int wall_add_to_side(fvcvertptr &vcvertptr, wall_array &Walls, const vmsegptridx_t segp, const unsigned side, const unsigned type)
 {
-	if (add_wall(segp, side)) {
+	if (add_wall(vcvertptr, Walls, segp, side)) {
 		const auto &&csegp = segp.absolute_sibling(segp->children[side]);
 		auto connectside = find_connect_side(segp, csegp);
 
-		auto &w0 = *vmwallptr(segp->sides[side].wall_num);
-		auto &w1 = *vmwallptr(csegp->sides[connectside].wall_num);
+		auto &vmwallptr = Walls.vmptr;
+		auto &w0 = *vmwallptr(segp->shared_segment::sides[side].wall_num);
+		auto &w1 = *vmwallptr(csegp->shared_segment::sides[connectside].wall_num);
 		w0.segnum = segp;
 		w1.segnum = csegp;
 
@@ -743,8 +795,8 @@ static int wall_add_to_side(const vmsegptridx_t segp, int side, sbyte type)
 			}	
 
 		if (type != WALL_DOOR) {
-			segp->sides[side].tmap_num2 = 0;
-			csegp->sides[connectside].tmap_num2 = 0;
+			segp->unique_segment::sides[side].tmap_num2 = 0;
+			csegp->unique_segment::sides[connectside].tmap_num2 = 0;
 			}
 
 		if (type == WALL_DOOR) {
@@ -770,14 +822,15 @@ static int wall_add_to_side(const vmsegptridx_t segp, int side, sbyte type)
 
 //---------------------------------------------------------------------
 // Add a wall to markedside
-int wall_add_to_markedside(sbyte type)
+int wall_add_to_markedside(fvcvertptr &vcvertptr, wall_array &Walls, const int8_t type)
 {
-	if (add_wall(Markedsegp, Markedside)) {
+	if (add_wall(vcvertptr, Walls, Markedsegp, Markedside)) {
 		const auto &&csegp = vmsegptridx(Markedsegp->children[Markedside]);
 		auto Connectside = find_connect_side(Markedsegp, csegp);
 
-		const auto wall_num = Markedsegp->sides[Markedside].wall_num;
-		const auto cwall_num = csegp->sides[Connectside].wall_num;
+		const auto wall_num = Markedsegp->shared_segment::sides[Markedside].wall_num;
+		const auto cwall_num = csegp->shared_segment::sides[Connectside].wall_num;
+		auto &vmwallptr = Walls.vmptr;
 		auto &w0 = *vmwallptr(wall_num);
 		auto &w1 = *vmwallptr(cwall_num);
 
@@ -811,8 +864,8 @@ int wall_add_to_markedside(sbyte type)
 			}	
 
 		if (type != WALL_DOOR) {
-			Markedsegp->sides[Markedside].tmap_num2 = 0;
-			csegp->sides[Connectside].tmap_num2 = 0;
+			Markedsegp->unique_segment::sides[Markedside].tmap_num2 = 0;
+			csegp->unique_segment::sides[Connectside].tmap_num2 = 0;
 			}
 
 		Update_flags |= UF_WORLD_CHANGED;
@@ -826,7 +879,7 @@ int wall_add_to_markedside(sbyte type)
 int bind_wall_to_control_center() {
 
 	int link_num;
-	if (Cursegp->sides[Curside].wall_num == wall_none) {
+	if (Cursegp->shared_segment::sides[Curside].wall_num == wall_none) {
 		editor_status("No wall at Curside.");
 		return 0;
 	}
@@ -852,7 +905,9 @@ int bind_wall_to_control_center() {
 //link two doors, curseg/curside and markedseg/markedside
 int wall_link_doors()
 {
-	const auto cwall_num = Cursegp->sides[Curside].wall_num;
+	const auto cwall_num = Cursegp->shared_segment::sides[Curside].wall_num;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &imwallptr = Walls.imptr;
 	const auto &&w1 = imwallptr(cwall_num);
 
 	if (!w1 || w1->type != WALL_DOOR) {
@@ -865,7 +920,7 @@ int wall_link_doors()
 		return 0;
 	}
 	
-	const auto mwall_num = Markedsegp->sides[Markedside].wall_num;
+	const auto mwall_num = Markedsegp->shared_segment::sides[Markedside].wall_num;
 	const auto &&w2 = imwallptr(mwall_num);
 
 	if (!w2 || w2->type != WALL_DOOR) {
@@ -879,15 +934,17 @@ int wall_link_doors()
 	if (w2->linked_wall != wall_none)
 		editor_status("Markedseg/markedside is already linked");
 
-	w1->linked_wall = Markedsegp->sides[Markedside].wall_num;
-	w2->linked_wall = Cursegp->sides[Curside].wall_num;
+	w1->linked_wall = Markedsegp->shared_segment::sides[Markedside].wall_num;
+	w2->linked_wall = Cursegp->shared_segment::sides[Curside].wall_num;
 
 	return 1;
 }
 
 int wall_unlink_door()
 {
-	const auto cwall_num = Cursegp->sides[Curside].wall_num;
+	const auto cwall_num = Cursegp->shared_segment::sides[Curside].wall_num;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &imwallptr = Walls.imptr;
 	const auto &&w1 = imwallptr(cwall_num);
 
 	if (!w1 || w1->type != WALL_DOOR) {
@@ -901,6 +958,7 @@ int wall_unlink_door()
 		return 0;
 	}
 
+	auto &vmwallptr = Walls.vmptr;
 	auto &w2 = *vmwallptr(w1->linked_wall);
 	Assert(w2.linked_wall == cwall_num);
 
@@ -913,6 +971,7 @@ int wall_unlink_door()
 
 int check_walls() 
 {
+	auto &RobotCenters = LevelSharedRobotcenterState.RobotCenters;
 	array<count_wall, MAX_WALLS> CountedWalls;
 	int matcen_num;
 
@@ -930,7 +989,7 @@ int check_walls()
 			if (matcen_num > -1)
 					RobotCenters[matcen_num].segnum = segp;
 	
-			range_for (auto &&e, enumerate(segp->sides))
+			range_for (auto &&e, enumerate(segp->shared_segment::sides))
 			{
 				auto &s = e.value;
 				if (s.wall_num != wall_none) {
@@ -943,16 +1002,18 @@ int check_walls()
 		}
 	}
 
-	if (wall_count != Num_walls) {
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	if (wall_count != Walls.get_count()) {
 		if (ui_messagebox(-2, -2, 2, "Num_walls is bogus\nDo you wish to correct it?\n", "Yes", "No") == 1)
 		{
 			Walls.set_count(wall_count);
-			editor_status_fmt("Num_walls set to %d\n", Num_walls);
+			editor_status_fmt("Num_walls set to %d\n", Walls.get_count());
 		}
 	}
 
 	// Check validity of Walls array.
-	range_for (auto &cw, partial_const_range(CountedWalls, Num_walls))
+	auto &vmwallptr = Walls.vmptr;
+	range_for (auto &cw, partial_const_range(CountedWalls, Walls.get_count()))
 	{
 		auto &w = *vmwallptr(cw.wallnum);
 		if (w.segnum != cw.segnum || w.sidenum != cw.sidenum)
@@ -971,11 +1032,12 @@ int check_walls()
 	};
 	unsigned trigger_count = std::count_if(used_walls.begin(), used_walls.end(), predicate);
 
-	if (trigger_count != Num_triggers) {
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	if (trigger_count != Triggers.get_count()) {
 		if (ui_messagebox(-2, -2, 2, "Num_triggers is bogus\nDo you wish to correct it?\n", "Yes", "No") == 1)
 		{
 			Triggers.set_count(trigger_count);
-			editor_status_fmt("Num_triggers set to %d\n", Num_triggers);
+			editor_status_fmt("Num_triggers set to %d\n", Triggers.get_count());
 		}
 	}
 
@@ -988,11 +1050,13 @@ int delete_all_walls()
 {
 	if (ui_messagebox(-2, -2, 2, "Are you sure that walls are hosed so\n badly that you want them ALL GONE!?\n", "YES!", "No") == 1)
 	{
-		range_for (const auto &&segp, vmsegptr)
+		range_for (shared_segment &segp, vmsegptr)
 		{
-			range_for (auto &side, segp->sides)
+			range_for (auto &side, segp.sides)
 				side.wall_num = wall_none;
 		}
+		auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
 		Walls.set_count(0);
 		Triggers.set_count(0);
 
@@ -1005,8 +1069,9 @@ int delete_all_walls()
 // ------------------------------------------------------------------------------------------------
 static void copy_old_wall_data_to_new(wallnum_t owall, wallnum_t nwall)
 {
-	auto &o = *vcwallptr(owall);
-	auto &n = *vmwallptr(nwall);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &o = *Walls.vcptr(owall);
+	auto &n = *Walls.vmptr(nwall);
 	n.flags = o.flags;
 	n.type = o.type;
 	n.clip_num = o.clip_num;
@@ -1022,37 +1087,27 @@ static void copy_old_wall_data_to_new(wallnum_t owall, wallnum_t nwall)
 	}
 }
 
-//typedef struct trigger {
-//	sbyte		type;
-//	short		flags;
-//	fix		value;
-//	fix		time;
-//	sbyte		link_num;
-//	short 	num_links;
-//	short 	seg[MAX_WALLS_PER_LINK];
-//	short		side[MAX_WALLS_PER_LINK];
-//	} trigger;
-
-
 // ------------------------------------------------------------------------------------------------
 void copy_group_walls(int old_group, int new_group)
 {
 	group::segment_array_type_t::const_iterator bn = GroupList[new_group].segments.begin();
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vmwallptr = Walls.vmptr;
 	range_for (const auto old_seg, GroupList[old_group].segments)
 	{
 		const auto new_seg = *bn++;
-		auto &os = vcsegptr(old_seg)->sides;
-		auto &ns = vmsegptr(new_seg)->sides;
+		auto &os = vcsegptr(old_seg)->shared_segment::sides;
+		auto &ns = vmsegptr(new_seg)->shared_segment::sides;
 		for (int j=0; j<MAX_SIDES_PER_SEGMENT; j++) {
 			if (os[j].wall_num != wall_none) {
-				ns[j].wall_num = Num_walls;
-				copy_old_wall_data_to_new(os[j].wall_num, Num_walls);
-				auto &w = *vmwallptr(static_cast<wallnum_t>(Num_walls));
+				ns[j].wall_num = Walls.get_count();
+				copy_old_wall_data_to_new(os[j].wall_num, Walls.get_count());
+				auto &w = *vmwallptr(static_cast<wallnum_t>(Walls.get_count()));
 				w.segnum = new_seg;
 				w.sidenum = j;
-				Walls.set_count(Num_walls + 1);
-				Assert(Num_walls < MAX_WALLS);
+				Walls.set_count(Walls.get_count() + 1);
+				Assert(Walls.get_count() < MAX_WALLS);
 			}
 		}
 	}
@@ -1070,13 +1125,15 @@ void check_wall_validity(void)
 	if (!Validate_walls)
 		return;
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	range_for (const auto &&w, vcwallptr)
 	{
 		segnum_t	segnum;
 		segnum = w->segnum;
 		sidenum = w->sidenum;
 
-		if (vcwallptr(vcsegptr(segnum)->sides[sidenum].wall_num) != w) {
+		if (vcwallptr(vcsegptr(segnum)->shared_segment::sides[sidenum].wall_num) != w) {
 			if (!Validate_walls)
 				return;
 			Int3();		//	Error! Your mine has been invalidated!
@@ -1096,7 +1153,7 @@ void check_wall_validity(void)
 		if (segp->segnum != segment_none)
 			for (int j=0; j<MAX_SIDES_PER_SEGMENT; j++) {
 				// Check walls
-				auto wall_num = segp->sides[j].wall_num;
+				auto wall_num = segp->shared_segment::sides[j].wall_num;
 				if (wall_num != wall_none) {
 					if (wall_flags[wall_num] != 0) {
 						if (!Validate_walls)

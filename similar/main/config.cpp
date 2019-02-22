@@ -82,6 +82,11 @@ Cfg GameCfg;
 #define MovieTexFiltStr "MovieTexFilt"
 #define MovieSubtitlesStr "MovieSubtitles"
 #endif
+#if DXX_USE_ADLMIDI
+#define ADLMIDINumChipsStr	"ADLMIDI_NumberOfChips"
+#define ADLMIDIBankStr	"ADLMIDI_Bank"
+#define ADLMIDIEnabledStr	"ADLMIDI_Enabled"
+#endif
 #define VSyncStr "VSync"
 #define MultisampleStr "Multisample"
 #define FPSIndicatorStr "FPSIndicator"
@@ -94,7 +99,7 @@ int ReadConfigFile()
 	GameCfg.MusicVolume = 8;
 	GameCfg.ReverseStereo = 0;
 	GameCfg.OrigTrackOrder = 0;
-#if defined(__APPLE__) && defined(__MACH__)
+#if SDL_MAJOR_VERSION == 1 && defined(__APPLE__) && defined(__MACH__)
 	GameCfg.MusicType = MUSIC_TYPE_REDBOOK;
 #else
 	GameCfg.MusicType = MUSIC_TYPE_BUILTIN;
@@ -217,6 +222,14 @@ int ReadConfigFile()
 		else if (cmp(lb, eq, MovieSubtitlesStr))
 			convert_integer(GameCfg.MovieSubtitles, value);
 #endif
+#if DXX_USE_ADLMIDI
+		else if (cmp(lb, eq, ADLMIDINumChipsStr))
+			convert_integer(CGameCfg.ADLMIDI_num_chips, value);
+		else if (cmp(lb, eq, ADLMIDIBankStr))
+			convert_integer(CGameCfg.ADLMIDI_bank, value);
+		else if (cmp(lb, eq, ADLMIDIEnabledStr))
+			convert_integer(CGameCfg.ADLMIDI_enabled, value);
+#endif
 		else if (cmp(lb, eq, VSyncStr))
 			convert_integer(CGameCfg.VSync, value);
 		else if (cmp(lb, eq, MultisampleStr))
@@ -275,6 +288,11 @@ int WriteConfigFile()
 #if defined(DXX_BUILD_DESCENT_II)
 	PHYSFSX_printf(infile, "%s=%i\n", MovieTexFiltStr, GameCfg.MovieTexFilt);
 	PHYSFSX_printf(infile, "%s=%i\n", MovieSubtitlesStr, GameCfg.MovieSubtitles);
+#endif
+#if DXX_USE_ADLMIDI
+	PHYSFSX_printf(infile, "%s=%i\n", ADLMIDINumChipsStr, CGameCfg.ADLMIDI_num_chips);
+	PHYSFSX_printf(infile, "%s=%i\n", ADLMIDIBankStr, CGameCfg.ADLMIDI_bank);
+	PHYSFSX_printf(infile, "%s=%i\n", ADLMIDIEnabledStr, CGameCfg.ADLMIDI_enabled);
 #endif
 	PHYSFSX_printf(infile, "%s=%i\n", VSyncStr, CGameCfg.VSync);
 	PHYSFSX_printf(infile, "%s=%i\n", MultisampleStr, CGameCfg.Multisample);

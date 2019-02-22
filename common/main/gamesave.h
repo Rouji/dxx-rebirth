@@ -30,6 +30,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "pstypes.h"
 
 #ifdef __cplusplus
+#include "fwd-segment.h"
 
 #define D1X_LEVEL_FILE_EXTENSION	"RDL"
 #define D2X_LEVEL_FILE_EXTENSION	"RL2"
@@ -52,10 +53,18 @@ int get_level_name(void);
 
 #ifdef dsx
 namespace dsx {
-extern int load_level(const char *filename);
+int load_level(
+#if defined(DXX_BUILD_DESCENT_II)
+	d_level_shared_destructible_light_state &LevelSharedDestructibleLightState,
+#endif
+	const char *filename);
+int save_level(
+#if defined(DXX_BUILD_DESCENT_II)
+	const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState,
+#endif
+	const char *filename);
 }
 #endif
-extern int save_level(const char *filename);
 
 extern char Gamesave_current_filename[PATH_MAX];
 

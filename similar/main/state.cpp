@@ -36,6 +36,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "object.h"
 #include "gamemine.h"
 #include "dxxerror.h"
+#include "console.h"
 #include "gamefont.h"
 #include "gameseg.h"
 #include "switch.h"
@@ -83,6 +84,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include "compiler-exchange.h"
 #include "compiler-range_for.h"
+#include "d_enumerate.h"
 #include "partial_range.h"
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -505,7 +507,13 @@ static void state_player_to_player_rw(const fix pl_shields, const player *pl, pl
 	pl_rw->flags                     = pl_info.powerup_flags.get_player_flags();
 	pl_rw->energy                    = pl_info.energy;
 	pl_rw->shields                   = pl_shields;
-	pl_rw->lives                     = pl->lives;
+	/*
+	 * The savegame only allocates a uint8_t for this value.  If the
+	 * player has exceeded the maximum representable value, cap at that
+	 * value.  This is better than truncating the value, since the
+	 * player will get to keep more lives this way than with truncation.
+	 */
+	pl_rw->lives                     = std::min<unsigned>(pl->lives, std::numeric_limits<uint8_t>::max());
 	pl_rw->level                     = pl->level;
 	pl_rw->laser_level               = pl_info.laser_level;
 	pl_rw->starting_level            = pl->starting_level;
@@ -939,6 +947,8 @@ int state_save_all(const secret_save secret, const blind_save blind_save)
 
 int state_save_all_sub(const char *filename, const char *desc)
 {
+	auto &RobotCenters = LevelSharedRobotcenterState.RobotCenters;
+	auto &Station = LevelUniqueFuelcenterState.Station;
 	char mission_filename[9];
 	fix tmptime32 = 0;
 
@@ -949,6 +959,7 @@ int state_save_all_sub(const char *filename, const char *desc)
 
 	auto fp = PHYSFSX_openWriteBuffered(filename);
 	if ( !fp ) {
+		con_printf(CON_URGENT, "Failed to open %s: %s", filename, PHYSFS_getLastError());
 		nm_messagebox(NULL, 1, TXT_OK, "Error writing savegame.\nPossibly out of disk\nspace.");
 		return 0;
 	}
@@ -1094,7 +1105,10 @@ int state_save_all_sub(const char *filename, const char *desc)
 	
 //Save wall info
 	{
-		const int i = Num_walls;
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
+		auto &vcwallptr = Walls.vcptr;
+	{
+		const int i = Walls.get_count();
 	PHYSFS_write(fp, &i, sizeof(int), 1);
 	}
 	range_for (const auto &&w, vcwallptr)
@@ -1102,61 +1116,52 @@ int state_save_all_sub(const char *filename, const char *desc)
 
 #if defined(DXX_BUILD_DESCENT_II)
 //Save exploding wall info
-	{
-		const int i = expl_wall_list.size();
-	PHYSFS_write(fp, &i, sizeof(int), 1);
-	}
-	{
-		const disk_expl_wall None{-1, 0, 0};
-	range_for (auto &e, expl_wall_list)
-	{
-		disk_expl_wall d;
-		const disk_expl_wall *i;
-		if (e.segnum == segment_none)
-			i = &None;
-		else
-		{
-			i = &d;
-		d.segnum = e.segnum;
-		d.sidenum = e.sidenum;
-		d.time = e.time;
-		}
-		PHYSFS_write(fp, i, sizeof(d), 1);
-	}
-	}
+	expl_wall_write(Walls.vmptr, fp);
 #endif
+	}
 
 //Save door info
+	{
+		auto &ActiveDoors = LevelUniqueWallSubsystemState.ActiveDoors;
 	{
 		const int i = ActiveDoors.get_count();
 	PHYSFS_write(fp, &i, sizeof(int), 1);
 	}
-	range_for (auto &&ad, vcactdoorptr)
+		range_for (auto &&ad, ActiveDoors.vcptr)
 		active_door_write(fp, ad);
+	}
 
 #if defined(DXX_BUILD_DESCENT_II)
 //Save cloaking wall info
 	{
+		auto &CloakingWalls = LevelUniqueWallSubsystemState.CloakingWalls;
+	{
 		const int i = CloakingWalls.get_count();
 	PHYSFS_write(fp, &i, sizeof(int), 1);
 	}
-	range_for (auto &&w, vcclwallptr)
+		range_for (auto &&w, CloakingWalls.vcptr)
 		cloaking_wall_write(w, fp);
+	}
 #endif
 
 //Save trigger info
 	{
+		auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	{
 		unsigned num_triggers = Triggers.get_count();
 		PHYSFS_write(fp, &num_triggers, sizeof(int), 1);
 	}
-	range_for (const auto vt, vctrgptr)
+	range_for (const auto vt, Triggers.vcptr)
 		trigger_write(fp, *vt);
+	}
 
 //Save tmap info
 	range_for (const auto &&segp, vcsegptr)
 	{
-		range_for (const auto &j, segp->sides)
-			segment_side_wall_tmap_write(fp, j);
+		range_for (const auto &e, enumerate(segp->shared_segment::sides))	// d_zip
+		{
+			segment_side_wall_tmap_write(fp, e.value, segp->unique_segment::sides[e.idx]);
+		}
 	}
 
 // Save the fuelcen info
@@ -1174,6 +1179,7 @@ int state_save_all_sub(const char *filename, const char *desc)
 		matcen_info_write(fp, r, 0x7f);
 #endif
 	control_center_triggers_write(&ControlCenterTriggers, fp);
+	const auto Num_fuelcenters = LevelUniqueFuelcenterState.Num_fuelcenters;
 	PHYSFS_write(fp, &Num_fuelcenters, sizeof(int), 1);
 	range_for (auto &s, partial_range(Station, Num_fuelcenters))
 	{
@@ -1315,6 +1321,8 @@ void set_pos_from_return_segment(void)
 {
 	const auto &&plobjnum = vmobjptridx(get_local_player().objnum);
 	const auto &&segp = vmsegptridx(Secret_return_segment);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	compute_segment_center(vcvertptr, plobjnum->pos, segp);
 	obj_relink(vmobjptr, vmsegptr, plobjnum, segp);
 	reset_player_object();
@@ -1405,15 +1413,21 @@ int state_restore_all(const int in_game, const secret_restore secret, const char
 		}
 	}
 	}
-	return state_restore_all_sub(filename, secret);
+	return state_restore_all_sub(
+#if defined(DXX_BUILD_DESCENT_II)
+		LevelSharedSegmentState.DestructibleLights, secret,
+#endif
+		filename);
 }
 
 #if defined(DXX_BUILD_DESCENT_I)
 int state_restore_all_sub(const char *filename)
 #elif defined(DXX_BUILD_DESCENT_II)
-int state_restore_all_sub(const char *filename, const secret_restore secret)
+int state_restore_all_sub(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, const secret_restore secret, const char *const filename)
 #endif
 {
+	auto &RobotCenters = LevelSharedRobotcenterState.RobotCenters;
+	auto &Station = LevelUniqueFuelcenterState.Station;
 	int version, coop_player_got[MAX_PLAYERS], coop_org_objnum = get_local_player().objnum;
 	int swap = 0;	// if file is not endian native, have to swap all shorts and ints
 	int current_level;
@@ -1426,6 +1440,7 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 #if defined(DXX_BUILD_DESCENT_I)
 	static constexpr std::integral_constant<secret_restore, secret_restore::none> secret{};
 #elif defined(DXX_BUILD_DESCENT_II)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	fix64	old_gametime = GameTime64;
 #endif
 
@@ -1483,9 +1498,9 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 // Read the mission info...
 	PHYSFS_read(fp, mission, sizeof(char) * 9, 1);
 
-	if (!load_mission_by_name(mission))
+	if (const auto errstr = load_mission_by_name(mission))
 	{
-		nm_messagebox( NULL, 1, "Ok", "Error!\nUnable to load mission\n'%s'\n", mission );
+		nm_messagebox(nullptr, 1, TXT_OK, "Error!\nUnable to load mission\n'%s'\n\n%s", mission, errstr);
 		return 0;
 	}
 
@@ -1617,7 +1632,7 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 	{
 		segp->objects = object_none;
 	}
-	reset_objects(ObjectState, 1);
+	reset_objects(LevelUniqueObjectState, 1);
 
 	//Read objects, and pop 'em into their respective segments.
 	{
@@ -1654,7 +1669,7 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 		}
 #endif
 	}
-	special_reset_objects(ObjectState);
+	special_reset_objects(LevelUniqueObjectState);
 	/* Reload plrobj reference.  The player's object number may have
 	 * been changed by the state_object_rw_to_object call.
 	 */
@@ -1689,14 +1704,17 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 	}
 
 	//Restore wall info
+	init_exploding_walls();
+	{
+		auto &Walls = LevelUniqueWallSubsystemState.Walls;
 	Walls.set_count(PHYSFSX_readSXE32(fp, swap));
-	range_for (const auto &&w, vmwallptr)
+	range_for (const auto &&w, Walls.vmptr)
 		wall_read(fp, *w);
 
 #if defined(DXX_BUILD_DESCENT_II)
 	//now that we have the walls, check if any sounds are linked to
 	//walls that are now open
-	range_for (const auto &&wp, vcwallptr)
+	range_for (const auto &&wp, Walls.vcptr)
 	{
 		auto &w = *wp;
 		if (w.type == WALL_OPEN)
@@ -1706,35 +1724,43 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 	//Restore exploding wall info
 	if (version >= 10) {
 		unsigned i = PHYSFSX_readSXE32(fp, swap);
-		expl_wall_read_n_swap(fp, swap, partial_range(expl_wall_list, i));
+		expl_wall_read_n_swap(Walls.vmptr, fp, swap, i);
 	}
 #endif
+	}
 
 	//Restore door info
+	{
+		auto &ActiveDoors = LevelUniqueWallSubsystemState.ActiveDoors;
 	ActiveDoors.set_count(PHYSFSX_readSXE32(fp, swap));
-	range_for (auto &&ad, vmactdoorptr)
+	range_for (auto &&ad, ActiveDoors.vmptr)
 		active_door_read(fp, ad);
+	}
 
 #if defined(DXX_BUILD_DESCENT_II)
 	if (version >= 14) {		//Restore cloaking wall info
 		unsigned num_cloaking_walls = PHYSFSX_readSXE32(fp, swap);
+		auto &CloakingWalls = LevelUniqueWallSubsystemState.CloakingWalls;
 		CloakingWalls.set_count(num_cloaking_walls);
-		range_for (auto &&w, vmclwallptr)
+		range_for (auto &&w, CloakingWalls.vmptr)
 			cloaking_wall_read(w, fp);
 	}
 #endif
 
 	//Restore trigger info
+	{
+		auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
 	Triggers.set_count(PHYSFSX_readSXE32(fp, swap));
-	range_for (const auto t, vmtrgptr)
+	range_for (const auto t, Triggers.vmptr)
 		trigger_read(fp, *t);
+	}
 
 	//Restore tmap info (to temp values so we can use compiled-in tmap info to compute static_light
 	range_for (const auto &&segp, vmsegptridx)
 	{
 		for (unsigned j = 0; j < 6; ++j)
 		{
-			segp->sides[j].wall_num = PHYSFSX_readSXE16(fp, swap);
+			segp->shared_segment::sides[j].wall_num = PHYSFSX_readSXE16(fp, swap);
 			TempTmapNum[segp][j] = PHYSFSX_readSXE16(fp, swap);
 			TempTmapNum2[segp][j] = PHYSFSX_readSXE16(fp, swap);
 		}
@@ -1756,7 +1782,8 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 		matcen_info_read(fp, r);
 #endif
 	control_center_triggers_read(&ControlCenterTriggers, fp);
-	Num_fuelcenters = PHYSFSX_readSXE32(fp, swap);
+	const unsigned Num_fuelcenters = PHYSFSX_readSXE32(fp, swap);
+	LevelUniqueFuelcenterState.Num_fuelcenters = Num_fuelcenters;
 	range_for (auto &s, partial_range(Station, Num_fuelcenters))
 	{
 		fuelcen_read(fp, s);
@@ -1912,7 +1939,7 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 				PHYSFS_read(fp, &i.light_subtracted, sizeof(i.light_subtracted), 1);
 			}
 		}
-		apply_all_changed_light();
+		apply_all_changed_light(LevelSharedDestructibleLightState, Segments.vmptridx);
 	} else {
 		range_for (const auto &&segp, vmsegptr)
 		{
@@ -1953,8 +1980,9 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 	{
 		for (unsigned j = 0; j < 6; ++j)
 		{
-			segp->sides[j].tmap_num = TempTmapNum[segp][j];
-			segp->sides[j].tmap_num2 = TempTmapNum2[segp][j];
+			auto &uside = segp->unique_segment::sides[j];
+			uside.tmap_num = TempTmapNum[segp][j];
+			uside.tmap_num2 = TempTmapNum2[segp][j];
 		}
 	}
 
@@ -2017,7 +2045,7 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 					obj->type = OBJ_PLAYER;
 					set_player_id(obj, i); // assign player object id to player number
 					multi_reset_player_object(obj);
-					update_object_seg(obj);
+					update_object_seg(vmobjptr, LevelSharedSegmentState, LevelUniqueSegmentState, obj);
 				}
 			}
 		}
@@ -2050,7 +2078,7 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 			if (!coop_player_got[i] && vcplayerptr(i)->connected == CONNECT_PLAYING)
 				multi_disconnect_player(i);
 		Viewer = ConsoleObject = &get_local_plrobj(); // make sure Viewer and ConsoleObject are set up (which we skipped by not using InitPlayerObject but we need since objects changed while loading)
-		special_reset_objects(ObjectState); // since we juggled around with objects to remap coop players rebuild the index of free objects
+		special_reset_objects(LevelUniqueObjectState); // since we juggled around with objects to remap coop players rebuild the index of free objects
 	}
 	if (Game_wind)
 		if (!window_is_visible(Game_wind))

@@ -76,12 +76,12 @@ static void do_physics_align_object(object_base &obj)
 	fixang delta_ang,roll_ang;
 	//vms_vector forvec = {0,0,f1_0};
 	fix largest_d=-f1_0;
-	const side *best_side = nullptr;
+	const shared_side *best_side = nullptr;
 	// bank player according to segment orientation
 
 	//find side of segment that player is most alligned with
 
-	range_for (auto &i, vcsegptr(obj.segnum)->sides)
+	range_for (auto &i, vcsegptr(obj.segnum)->shared_segment::sides)
 	{
 		const auto d = vm_vec_dot(i.normals[0], obj.orient.uvec);
 
@@ -258,11 +258,13 @@ static void fix_illegal_wall_intersection(const vmobjptridx_t obj)
 	if (!(obj->type == OBJ_PLAYER || obj->type == OBJ_ROBOT))
 		return;
 
-	object_intersects_wall_result_t hresult;
-	if (object_intersects_wall_d(obj, hresult))
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	const auto &&hresult = sphere_intersects_wall(vcvertptr, obj->pos, vcsegptridx(obj->segnum), obj->size);
+	if (hresult.seg)
 	{
-		vm_vec_scale_add2(obj->pos, Segments[hresult.seg].sides[hresult.side].normals[0], FrameTime*10);
-		update_object_seg(obj);
+		vm_vec_scale_add2(obj->pos, hresult.seg->sides[hresult.side].normals[0], FrameTime*10);
+		update_object_seg(vmobjptr, LevelSharedSegmentState, LevelUniqueSegmentState, obj);
 	}
 }
 
@@ -270,22 +272,36 @@ namespace {
 
 class ignore_objects_array_t
 {
-	typedef array<objnum_t, MAX_IGNORE_OBJS> array_t;
-	array_t a;
+	using array_t = array<vcobjidx_t, MAX_IGNORE_OBJS>;
 	array_t::iterator e;
+	union {
+		array_t a;
+	};
 public:
-	ignore_objects_array_t() :
-		e(a.begin())
+	/* The iterator should be initialized in a
+	 * member-initialization-list.  However, clang complains that the
+	 * union is uninitialized during the member-initialization-list, but
+	 * accepts the still-uninitialized union member once the constructor
+	 * body starts.  Assign the iterator in the body to silence this
+	 * useless clang warning.
+	 *
+	 * Known bad:
+	 *	clang-5
+	 *	clang-7
+	 */
+	ignore_objects_array_t()
 	{
+		e = a.begin();
 	}
-	bool push_back(objnum_t o)
+	bool push_back(const vcobjidx_t o)
 	{
-		if (e == a.end())
+		if (unlikely(e == a.end()))
 			return false;
-		*e++ = o;
+		std::uninitialized_fill_n(e, 1, o);
+		++e;
 		return true;
 	}
-	operator std::pair<const objnum_t *, const objnum_t *>() const
+	operator std::pair<const vcobjidx_t *, const vcobjidx_t *>() const
 	{
 		return {a.begin(), e};
 	}
@@ -317,6 +333,9 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 	int bounced=0;
 	bool Player_ScrapeFrame=false;
 	auto result = window_event_result::handled;
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
+#endif
 
 	Assert(obj->movement_type == MT_PHYSICS);
 
@@ -384,6 +403,10 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 	}
 
 	int count = 0;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	do {
 		try_again = 0;
 
@@ -416,9 +439,10 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 		fate = find_vector_intersection(fq, hit_info);
 		//	Matt: Mike's hack.
 		if (fate == HIT_OBJECT) {
-			const auto &&objp = vcobjptr(hit_info.hit_object);
+			auto &objp = *vcobjptr(hit_info.hit_object);
 
-			if (((objp->type == OBJ_WEAPON) && is_proximity_bomb_or_smart_mine(get_weapon_id(objp))) || objp->type == OBJ_POWERUP) // do not increase count for powerups since they *should* not change our movement
+			if ((objp.type == OBJ_WEAPON && is_proximity_bomb_or_smart_mine(get_weapon_id(objp))) ||
+				objp.type == OBJ_POWERUP) // do not increase count for powerups since they *should* not change our movement
 				count--;
 		}
 
@@ -461,23 +485,24 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 		// update object's position and segment number
 		obj->pos = ipos;
 
+		const auto &&obj_segp = Segments.vmptridx(iseg);
 		if ( iseg != obj->segnum )
-			obj_relink(vmobjptr, vmsegptr, obj, vmsegptridx(iseg));
+			obj_relink(vmobjptr, Segments.vmptr, obj, obj_segp);
 
 		//if start point not in segment, move object to center of segment
-		if (get_seg_masks(vcvertptr, obj->pos, vcsegptr(obj->segnum), 0).centermask !=0 )
+		if (get_seg_masks(vcvertptr, obj->pos, Segments.vcptr(obj->segnum), 0).centermask != 0)
 		{
-			auto n = find_object_seg(obj);
+			auto n = find_object_seg(LevelSharedSegmentState, LevelUniqueSegmentState, obj);
 			if (n == segment_none)
 			{
 				//Int3();
-				if (obj->type == OBJ_PLAYER && (n = find_point_seg(obj->last_pos, vmsegptridx(obj->segnum))) != segment_none)
+				if (obj->type == OBJ_PLAYER && (n = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, obj->last_pos, obj_segp)) != segment_none)
 				{
 					obj->pos = obj->last_pos;
-					obj_relink(vmobjptr, vmsegptr, obj, n);
+					obj_relink(vmobjptr, Segments.vmptr, obj, n);
 				}
 				else {
-					compute_segment_center(vcvertptr, obj->pos, vcsegptr(obj->segnum));
+					compute_segment_center(vcvertptr, obj->pos, obj_segp);
 					obj->pos.x += obj;
 				}
 				if (obj->type == OBJ_WEAPON)
@@ -502,7 +527,7 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 		
 				//iseg = obj->segnum;		//don't change segment
 
-				obj_relink(vmobjptr, vmsegptr, obj, vmsegptridx(save_seg));
+				obj_relink(vmobjptr, Segments.vmptr, obj, Segments.vmptridx(save_seg));
 
 				moved_time = 0;
 			}
@@ -539,7 +564,11 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 				wall_part = vm_vec_dot(moved_v,hit_info.hit_wallnorm);
 
 				if ((wall_part != 0 && moved_time>0 && (hit_speed=-fixdiv(wall_part,moved_time))>0) || obj->type == OBJ_WEAPON || obj->type == OBJ_DEBRIS)
-					result = collide_object_with_wall(obj, hit_speed, vmsegptridx(WallHitSeg), WallHitSide, hit_info.hit_pnt);
+					result = collide_object_with_wall(
+#if defined(DXX_BUILD_DESCENT_II)
+						LevelSharedSegmentState.DestructibleLights,
+#endif
+						obj, hit_speed, Segments.vmptridx(WallHitSeg), WallHitSide, hit_info.hit_pnt);
 				/*
 				 * Due to the nature of this loop, it's possible that a local player may receive scrape damage multiple times in one frame.
 				 * Check if we received damage and do not apply more damage (nor produce damage sounds/flashes/bumps, etc) for the rest of the loop.
@@ -547,7 +576,7 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 				 * NOTE: Remote players will return false and never receive damage. But since we handle only one object (remote or local) per loop, this is no problem. 
 				 */
 				if (obj->type == OBJ_PLAYER && Player_ScrapeFrame == false)
-					Player_ScrapeFrame = scrape_player_on_wall(obj, vmsegptridx(WallHitSeg), WallHitSide, hit_info.hit_pnt);
+					Player_ScrapeFrame = scrape_player_on_wall(obj, Segments.vmptridx(WallHitSeg), WallHitSide, hit_info.hit_pnt);
 
 				Assert( WallHitSeg != segment_none );
 				Assert( WallHitSide > -1 );
@@ -568,13 +597,13 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 					 */
 					forcefield_bounce = 0;
 #elif defined(DXX_BUILD_DESCENT_II)
-					forcefield_bounce = (TmapInfo[Segments[WallHitSeg].sides[WallHitSide].tmap_num].flags & TMI_FORCE_FIELD);
+					forcefield_bounce = (TmapInfo[Segments[WallHitSeg].unique_segment::sides[WallHitSide].tmap_num].flags & TMI_FORCE_FIELD);
 					int check_vel=0;
 #endif
 
 					if (!forcefield_bounce && (obj->mtype.phys_info.flags & PF_STICK)) {		//stop moving
 
-						add_stuck_object(obj, vmsegptr(WallHitSeg), WallHitSide);
+						LevelUniqueStuckObjectState.add_stuck_object(vcwallptr, obj, Segments.vmptr(WallHitSeg), WallHitSide);
 
 						vm_vec_zero(obj->mtype.phys_info.velocity);
 						obj_stopped = 1;
@@ -723,12 +752,13 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 		if (sidenum != side_none)
 		{
 
-			if (! (WALL_IS_DOORWAY(orig_segp,sidenum) & WID_FLY_FLAG)) {
+			if (! (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, orig_segp, orig_segp, sidenum) & WID_FLY_FLAG))
+			{
 				fix dist;
 
 				//bump object back
 
-				const auto s = &orig_segp->sides[sidenum];
+				auto &s = orig_segp->shared_segment::sides[sidenum];
 
 				const auto v = create_abs_vertex_lists(orig_segp, s, sidenum);
 				const auto &vertex_list = v.second;
@@ -737,9 +767,9 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 				const auto b = begin(vertex_list);
 				const auto vertnum = *std::min_element(b, std::next(b, 4));
 
-				dist = vm_dist_to_plane(start_pos, s->normals[0], vcvertptr(vertnum));
-					vm_vec_scale_add(obj->pos,start_pos,s->normals[0],obj->size-dist);
-				update_object_seg(obj);
+				dist = vm_dist_to_plane(start_pos, s.normals[0], vcvertptr(vertnum));
+				vm_vec_scale_add(obj->pos, start_pos, s.normals[0], obj->size-dist);
+				update_object_seg(vmobjptr, LevelSharedSegmentState, LevelUniqueSegmentState, obj);
 
 			}
 		}
@@ -749,15 +779,16 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 	//if end point not in segment, move object to last pos, or segment center
 	if (get_seg_masks(vcvertptr, obj->pos, vcsegptr(obj->segnum), 0).centermask != 0)
 	{
-		if (find_object_seg(obj)==segment_none) {
+		if (find_object_seg(LevelSharedSegmentState, LevelUniqueSegmentState, obj) == segment_none)
+		{
 			segnum_t n;
 
 			//Int3();
-			const auto &&obj_segp = vmsegptridx(obj->segnum);
-			if (obj->type==OBJ_PLAYER && (n = find_point_seg(obj->last_pos,obj_segp)) != segment_none)
+			const auto &&obj_segp = Segments.vmptridx(obj->segnum);
+			if (obj->type == OBJ_PLAYER && (n = find_point_seg(LevelSharedSegmentState, LevelUniqueSegmentState, obj->last_pos, obj_segp)) != segment_none)
 			{
 				obj->pos = obj->last_pos;
-				obj_relink(vmobjptr, vmsegptr, obj, vmsegptridx(n));
+				obj_relink(vmobjptr, Segments.vmptr, obj, Segments.vmptridx(n));
 			}
 			else {
 				compute_segment_center(vcvertptr, obj->pos, obj_segp);
@@ -868,6 +899,9 @@ void phys_apply_rot(object &obj, const vms_vector &force_vec)
 	if (obj.movement_type != MT_PHYSICS)
 		return;
 
+#if defined(DXX_BUILD_DESCENT_II)
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+#endif
 	auto vecmag = vm_vec_mag(force_vec);
 	if (vecmag < F1_0/32)
 		rate = 4*F1_0;

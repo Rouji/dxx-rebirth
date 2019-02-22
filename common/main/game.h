@@ -281,8 +281,6 @@ static inline int game_mode_hoard()
 {
 	return (Game_mode & GM_HOARD);
 }
-// returns ptr to escort robot, or NULL
-imobjptridx_t find_escort();
 
 //Flickering light system
 struct flickering_light {
@@ -367,7 +365,6 @@ struct game_cheats : prohibit_void_ptr<game_cheats>
 };
 extern game_cheats cheats;
 
-void move_player_2_segment(vmsegptridx_t seg, int side);
 window *game_setup();
 window_event_result game_handler(window *wind,const d_event &event, const unused_window_userdata_t *);
 window_event_result ReadControls(const d_event &event);
@@ -398,6 +395,7 @@ extern fix64	Time_flash_last_played;
 #ifdef dsx
 namespace dsx {
 void dump_used_textures_all();
+void move_player_2_segment(vmsegptridx_t seg, unsigned side);
 }
 #endif
 #endif

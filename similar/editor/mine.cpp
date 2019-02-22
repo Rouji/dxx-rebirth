@@ -56,8 +56,6 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 static int save_mine_data(PHYSFS_File * SaveFile);
 
-static array<d_fname, MAX_TEXTURES> current_tmap_list;
-
 int	New_file_format_save = 1;
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -358,6 +356,8 @@ static int save_mine_data(PHYSFS_File * SaveFile)
 	med_compress_mine();
 	warn_if_concave_segments();
 	
+	array<d_fname, MAX_TEXTURES> current_tmap_list;
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	for (int i=0;i<NumTextures;i++)
 		current_tmap_list[i] = TmapInfo[i].filename;
 
@@ -367,12 +367,13 @@ static int save_mine_data(PHYSFS_File * SaveFile)
 	editor_offset = header_offset + sizeof(mine_header);
 	texture_offset = editor_offset + sizeof(mine_editor);
 	vertex_offset  = texture_offset + (13*NumTextures);
-	segment_offset = vertex_offset + (sizeof(vms_vector)*Num_vertices);
-	newsegment_offset = segment_offset + (sizeof(segment)*Num_segments);
+	segment_offset = vertex_offset + (sizeof(vms_vector) * LevelSharedVertexState.Num_vertices);
+	newsegment_offset = segment_offset + (sizeof(segment) * LevelSharedSegmentState.Num_segments);
 	newseg_verts_offset = newsegment_offset + sizeof(segment);
 	walls_offset = newseg_verts_offset + (sizeof(vms_vector)*8);
-	triggers_offset =	walls_offset + (sizeof(wall)*Num_walls);
-// 	doors_offset = triggers_offset + (sizeof(trigger)*Num_triggers);
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	triggers_offset =	walls_offset + (sizeof(wall)*Walls.get_count());
 
 	//===================== SAVE FILE INFO ========================
 
@@ -384,10 +385,10 @@ static int save_mine_data(PHYSFS_File * SaveFile)
 	mine_fileinfo.editor_offset     =   editor_offset;
 	mine_fileinfo.editor_size       =   sizeof(mine_editor);
 	mine_fileinfo.vertex_offset     =   vertex_offset;
-	mine_fileinfo.vertex_howmany    =   Num_vertices;
+	mine_fileinfo.vertex_howmany    =   LevelSharedVertexState.Num_vertices;
 	mine_fileinfo.vertex_sizeof     =   sizeof(vms_vector);
 	mine_fileinfo.segment_offset    =   segment_offset;
-	mine_fileinfo.segment_howmany   =   Num_segments;
+	mine_fileinfo.segment_howmany   =   LevelSharedSegmentState.Num_segments;
 	mine_fileinfo.segment_sizeof    =   sizeof(segment);
 	mine_fileinfo.newseg_verts_offset     =   newseg_verts_offset;
 	mine_fileinfo.newseg_verts_howmany    =   8;
@@ -396,10 +397,10 @@ static int save_mine_data(PHYSFS_File * SaveFile)
 	mine_fileinfo.texture_howmany   =   NumTextures;
 	mine_fileinfo.texture_sizeof    =   13;  // num characters in a name
 	mine_fileinfo.walls_offset		  =	walls_offset;
-	mine_fileinfo.walls_howmany	  =	Num_walls;
+	mine_fileinfo.walls_howmany	  =	Walls.get_count();
 	mine_fileinfo.walls_sizeof		  =	sizeof(wall);  
 	mine_fileinfo.triggers_offset	  =	triggers_offset;
-	mine_fileinfo.triggers_howmany  =	Num_triggers;
+	mine_fileinfo.triggers_howmany  =	Triggers.get_count();
 	mine_fileinfo.triggers_sizeof	  =	sizeof(trigger);  
 
 	// Write the fileinfo
@@ -407,8 +408,8 @@ static int save_mine_data(PHYSFS_File * SaveFile)
 
 	//===================== SAVE HEADER INFO ========================
 
-	mine_header.num_vertices        =   Num_vertices;
-	mine_header.num_segments        =   Num_segments;
+	mine_header.num_vertices        =   LevelSharedVertexState.Num_vertices;
+	mine_header.num_segments        =   LevelSharedSegmentState.Num_segments;
 
 	// Write the editor info
 	if (header_offset != PHYSFS_tell(SaveFile))
@@ -448,19 +449,23 @@ static int save_mine_data(PHYSFS_File * SaveFile)
 
 	if (vertex_offset != PHYSFS_tell(SaveFile))
 		Error( "OFFSETS WRONG IN MINE.C!" );
-	PHYSFS_write( SaveFile, Vertices, sizeof(vms_vector), Num_vertices );
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	PHYSFS_write(SaveFile, Vertices, sizeof(vms_vector), LevelSharedVertexState.Num_vertices);
 
 	//===================== SAVE SEGMENT INFO =========================
 
 	if (segment_offset != PHYSFS_tell(SaveFile))
 		Error( "OFFSETS WRONG IN MINE.C!" );
-	PHYSFS_write( SaveFile, &Segments.front(), sizeof(segment), Num_segments );
+	Error("Sorry, v20 segment support is broken.");
+#if 0
+	PHYSFS_write(SaveFile, &Segments.front(), sizeof(segment), LevelSharedSegmentState.Num_segments);
 
 	//===================== SAVE NEWSEGMENT INFO ======================
 
 	if (newsegment_offset != PHYSFS_tell(SaveFile))
 		Error( "OFFSETS WRONG IN MINE.C!" );
 	PHYSFS_write( SaveFile, &New_segment, sizeof(segment), 1 );
+#endif
 
 	if (newseg_verts_offset != PHYSFS_tell(SaveFile))
 		Error( "OFFSETS WRONG IN MINE.C!" );
@@ -516,28 +521,29 @@ static void dump_fix_as_ushort( fix value, int nbits, PHYSFS_File *SaveFile )
 	PHYSFS_writeULE16(SaveFile, short_value);
 }
 
-static void write_children(const vcsegptr_t seg, ubyte bit_mask, PHYSFS_File *SaveFile)
+static void write_children(const shared_segment &seg, const unsigned bit_mask, PHYSFS_File *const SaveFile)
 {
+	auto &children = seg.children;
 	for (int bit = 0; bit < MAX_SIDES_PER_SEGMENT; bit++)
 	{
 		if (bit_mask & (1 << bit))
-			PHYSFS_writeSLE16(SaveFile, seg->children[bit]);
+			PHYSFS_writeSLE16(SaveFile, children[bit]);
 	}
 }
 
-static void write_verts(const vcsegptr_t seg, PHYSFS_File *SaveFile)
+static void write_verts(const shared_segment &seg, PHYSFS_File *const SaveFile)
 {
-	range_for (auto &i, seg->verts)
+	range_for (auto &i, seg.verts)
 		PHYSFS_writeSLE16(SaveFile, i);
 }
 
-static void write_special(const vcsegptr_t seg, ubyte bit_mask, PHYSFS_File *SaveFile)
+static void write_special(const shared_segment &seg, const unsigned bit_mask, PHYSFS_File *const SaveFile)
 {
 	if (bit_mask & (1 << MAX_SIDES_PER_SEGMENT))
 	{
-		PHYSFSX_writeU8(SaveFile, seg->special);
-		PHYSFSX_writeU8(SaveFile, seg->matcen_num);
-		PHYSFS_writeULE16(SaveFile, seg->station_idx);
+		PHYSFSX_writeU8(SaveFile, seg.special);
+		PHYSFSX_writeU8(SaveFile, seg.matcen_num);
+		PHYSFS_writeULE16(SaveFile, seg.station_idx);
 	}
 }
 // -----------------------------------------------------------------------------
@@ -557,9 +563,11 @@ int save_mine_data_compiled(PHYSFS_File *SaveFile)
 		ui_messagebox( -2, -2, 1, message, "Ok" );
 	}
 
-	if (Highest_vertex_index >= MAX_VERTICES) {
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	if (Vertices.get_count() > MAX_VERTICES)
+	{
 		char	message[128];
-		snprintf(message, sizeof(message), "Error: Too many vertices (%i > %" PRIuFAST32 ") for game (not editor)", Highest_vertex_index+1, static_cast<uint_fast32_t>(MAX_VERTICES));
+		snprintf(message, sizeof(message), "Error: Too many vertices (%i > %" PRIuFAST32 ") for game (not editor)", Vertices.get_count(), static_cast<uint_fast32_t>(MAX_VERTICES));
 		ui_messagebox( -2, -2, 1, message, "Ok" );
 	}
 
@@ -567,18 +575,19 @@ int save_mine_data_compiled(PHYSFS_File *SaveFile)
 	PHYSFSX_writeU8(SaveFile, version);						// 1 byte = compiled version
 	if (New_file_format_save)
 	{
-		PHYSFS_writeSLE16(SaveFile, Num_vertices);					// 2 bytes = Num_vertices
-		PHYSFS_writeSLE16(SaveFile, Num_segments);					// 2 bytes = Num_segments
+		PHYSFS_writeSLE16(SaveFile, LevelSharedVertexState.Num_vertices);					// 2 bytes = Num_vertices
+		PHYSFS_writeSLE16(SaveFile, LevelSharedSegmentState.Num_segments);					// 2 bytes = Num_segments
 	}
 	else
 	{
-		PHYSFS_writeSLE32(SaveFile, Num_vertices);					// 4 bytes = Num_vertices
-		PHYSFS_writeSLE32(SaveFile, Num_segments);					// 4 bytes = Num_segments
+		PHYSFS_writeSLE32(SaveFile, LevelSharedVertexState.Num_vertices);					// 4 bytes = Num_vertices
+		PHYSFS_writeSLE32(SaveFile, LevelSharedSegmentState.Num_segments);					// 4 bytes = Num_segments
 	}
 
-	range_for (auto &i, partial_const_range(Vertices, Num_vertices))
+	range_for (auto &i, partial_const_range(Vertices, LevelSharedVertexState.Num_vertices))
 		PHYSFSX_writeVector(SaveFile, i);
 	
+	const auto Num_segments = LevelSharedSegmentState.Num_segments;
 	for (segnum_t segnum = 0; segnum < Num_segments; segnum++)
 	{
 		const auto &&seg = vcsegptr(segnum);
@@ -619,10 +628,10 @@ int save_mine_data_compiled(PHYSFS_File *SaveFile)
 		{
 			uint wallnum;
 
-			if (seg->sides[sidenum].wall_num != wall_none)
+			if (seg->shared_segment::sides[sidenum].wall_num != wall_none)
 			{
 				bit_mask |= (1 << sidenum);
-				wallnum = seg->sides[sidenum].wall_num;
+				wallnum = seg->shared_segment::sides[sidenum].wall_num;
 				Assert( wallnum < 255 );		// Get John or Mike.. can only store up to 255 walls!!! 
 				(void)wallnum;
 			}
@@ -635,17 +644,17 @@ int save_mine_data_compiled(PHYSFS_File *SaveFile)
 		for (short sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
 		{
 			if (bit_mask & (1 << sidenum))
-				PHYSFSX_writeU8(SaveFile, seg->sides[sidenum].wall_num);
+				PHYSFSX_writeU8(SaveFile, seg->shared_segment::sides[sidenum].wall_num);
 		}
 
 		for (short sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
 		{
-			if ((seg->children[sidenum] == segment_none) || (seg->sides[sidenum].wall_num != wall_none))
+			if ((seg->children[sidenum] == segment_none) || (seg->shared_segment::sides[sidenum].wall_num != wall_none))
 			{
 				ushort	tmap_num, tmap_num2;
 
-				tmap_num = seg->sides[sidenum].tmap_num;
-				tmap_num2 = seg->sides[sidenum].tmap_num2;
+				tmap_num = seg->unique_segment::sides[sidenum].tmap_num;
+				tmap_num2 = seg->unique_segment::sides[sidenum].tmap_num2;
 
 #if defined(DXX_BUILD_DESCENT_II)
 				if (Gamesave_current_version <= 3)	// convert texture numbers back to d1
@@ -663,7 +672,7 @@ int save_mine_data_compiled(PHYSFS_File *SaveFile)
 				if (tmap_num2 != 0 || !New_file_format_save)
 					PHYSFS_writeSLE16(SaveFile, tmap_num2);
 
-				range_for (auto &i, seg->sides[sidenum].uvls)
+				range_for (auto &i, seg->unique_segment::sides[sidenum].uvls)
 				{
 					dump_fix_as_short(i.u, 5, SaveFile);
 					dump_fix_as_short(i.v, 5, SaveFile);

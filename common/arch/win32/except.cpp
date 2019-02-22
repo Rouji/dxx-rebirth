@@ -46,6 +46,11 @@ class RAII_Windows_DynamicSharedObject
 		m_h(h)
 	{
 	}
+	static RAII_Windows_DynamicSharedObject LoadInternal(std::array<wchar_t, MAX_PATH> &pathbuf, const unsigned lws, const wchar_t *const filename)
+	{
+		wcscpy(&pathbuf[lws], filename);
+		return LoadLibraryW(pathbuf.data());
+	}
 public:
 	~RAII_Windows_DynamicSharedObject()
 	{
@@ -73,13 +78,17 @@ public:
 		{
 			if (lws >= MAX_PATH - N)
 				return nullptr;
-			wcscpy(&pathbuf[lws], filename);
-			return LoadLibraryW(pathbuf.data());
+			return LoadInternal(pathbuf, lws, filename);
 		}
 	template <typename T>
 		T *GetProc(const char *const proc) const
 		{
-			return reinterpret_cast<T *>(GetProcAddress(m_h, proc));
+			union {
+				FARPROC gpa;
+				T *result;
+			};
+			gpa = GetProcAddress(m_h, proc);
+			return result;
 		}
 };
 
@@ -447,10 +456,11 @@ static void write_exception_logs(const uint8_t *const sp)
 	path_buffer path_dump;
 #define DXX_PATH_DUMP_FORMAT_STRING	L"%s%s\n"
 #define DXX_PATH_DUMP_ARGUMENTS	\
-	, path_dump.front() ? L"\nIf possible, make available the binary file:\n  " : L""	\
+	, path_dump.front() ? L"If possible, make available the binary file:\n  " : L"No dump file could be generated."	\
 	, path_dump.data()
 #else
-#define DXX_PATH_DUMP_FORMAT_STRING
+#define DXX_PATH_DUMP_FORMAT_STRING	\
+	L"Dump file generation is not enabled in this build.\n"
 #define DXX_PATH_DUMP_ARGUMENTS
 #endif
 	path_buffer path_stack;
@@ -485,7 +495,7 @@ L"Rebirth encountered a fatal error.  Please report this to the developers.\n"
 L"\nInclude in your report:\n"
 L"%s%hs%s"
 L"* The level(s) played this session, including download URLs for any add-on missions\n"
-L"%s%s\n"
+L"%s%s\n\n"
 DXX_PATH_DUMP_FORMAT_STRING
 L"\nTo the extent possible, provide steps to reproduce, starting from the game main menu.",
 what.empty() ? L"" : L"* The exception message text:\n  \"", what.c_str(), what.empty() ? L"" : L"\"\n",

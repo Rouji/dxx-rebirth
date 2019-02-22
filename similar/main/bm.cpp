@@ -94,7 +94,6 @@ namespace dsx {
 Textures_array Textures;		// All textures.
 //for each model, a model number for dying & dead variants, or -1 if none
 array<int, MAX_POLYGON_MODELS> Dying_modelnums, Dead_modelnums;
-TmapInfo_array TmapInfo;
 array<bitmap_index, N_COCKPIT_BITMAPS> cockpit_bitmap;
 }
 
@@ -105,7 +104,6 @@ player_ship only_player_ship;
 
 //----------------- Miscellaneous bitmap pointers ---------------
 unsigned Num_cockpits;
-unsigned Num_tmaps;
 }
 
 //---------------- Variables for wall textures ------------------
@@ -150,19 +148,22 @@ int gamedata_init()
 	int retval;
 	
 	init_polygon_models();
-	init_endlevel();//adb: added, is also in bm_init_use_tbl (Chris: *Was* in bm_init_use_tbl)
 	retval = properties_init();				// This calls properties_read_cmp if appropriate
 	if (retval)
-		gamedata_read_tbl(retval == PIGGY_PC_SHAREWARE);
+		gamedata_read_tbl(Vclip, retval == PIGGY_PC_SHAREWARE);
 
 	piggy_read_sounds(retval == PIGGY_PC_SHAREWARE);
 	
 	return 0;
 }
 
+namespace dsx {
+
 // Read compiled properties data from descent.pig
-void properties_read_cmp(PHYSFS_File * fp)
+void properties_read_cmp(d_vclip_array &Vclip, PHYSFS_File * fp)
 {
+	auto &Robot_joints = LevelSharedRobotJointState.Robot_joints;
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	//  bitmap_index is a short
 	
 	NumTextures = PHYSFSX_readInt(fp);
@@ -185,7 +186,8 @@ void properties_read_cmp(PHYSFS_File * fp)
 	range_for (auto &w, WallAnims)
 		wclip_read(fp, w);
 
-	N_robot_types = PHYSFSX_readInt(fp);
+	LevelSharedRobotInfoState.N_robot_types = PHYSFSX_readInt(fp);
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	range_for (auto &r, Robot_info)
 		robot_info_read(fp, r);
 
@@ -200,6 +202,7 @@ void properties_read_cmp(PHYSFS_File * fp)
 	range_for (auto &p, Powerup_info)
 		powerup_type_info_read(fp, p);
 
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	N_polygon_models = PHYSFSX_readInt(fp);
 	{
 		const auto &&r = partial_range(Polygon_models, N_polygon_models);
@@ -249,8 +252,10 @@ void properties_read_cmp(PHYSFS_File * fp)
 #if DXX_USE_EDITOR
         //Build tmaplist
 	auto &&effect_range = partial_const_range(Effects, Num_effects);
-	Num_tmaps = TextureEffects + std::count_if(effect_range.begin(), effect_range.end(), [](const eclip &e) { return e.changing_wall_texture >= 0; });
+	LevelUniqueTmapInfoState.Num_tmaps = TextureEffects + std::count_if(effect_range.begin(), effect_range.end(), [](const eclip &e) { return e.changing_wall_texture >= 0; });
         #endif
+}
+
 }
 #elif defined(DXX_BUILD_DESCENT_II)
 static void tmap_info_read(tmap_info &ti, PHYSFS_File *fp)
@@ -272,12 +277,11 @@ static void tmap_info_read(tmap_info &ti, PHYSFS_File *fp)
 int gamedata_init()
 {
 	init_polygon_models();
-	init_endlevel();
 
 #if DXX_USE_EDITOR
 	// The pc_shareware argument is currently unused for Descent 2,
 	// but *may* be useful for loading Descent 1 Shareware texture properties.
-	if (!gamedata_read_tbl(0))
+	if (!gamedata_read_tbl(Vclip, 0))
 #endif
 		if (!properties_init())				// This calls properties_read_cmp
 				Error("Cannot open ham file\n");
@@ -287,8 +291,12 @@ int gamedata_init()
 	return 0;
 }
 
-void bm_read_all(PHYSFS_File * fp)
+namespace dsx {
+
+void bm_read_all(d_vclip_array &Vclip, PHYSFS_File * fp)
 {
+	auto &Robot_joints = LevelSharedRobotJointState.Robot_joints;
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	unsigned t;
 
 	NumTextures = PHYSFSX_readInt(fp);
@@ -312,8 +320,9 @@ void bm_read_all(PHYSFS_File * fp)
 	range_for (auto &w, partial_range(WallAnims, Num_wall_anims))
 		wclip_read(fp, w);
 
-	N_robot_types = PHYSFSX_readInt(fp);
-	range_for (auto &r, partial_range(Robot_info, N_robot_types))
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+	LevelSharedRobotInfoState.N_robot_types = PHYSFSX_readInt(fp);
+	range_for (auto &r, partial_range(Robot_info, LevelSharedRobotInfoState.N_robot_types))
 		robot_info_read(fp, r);
 
 	N_robot_joints = PHYSFSX_readInt(fp);
@@ -327,6 +336,7 @@ void bm_read_all(PHYSFS_File * fp)
 	range_for (auto &p, partial_range(Powerup_info, N_powerup_types))
 		powerup_type_info_read(fp, p);
 
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	N_polygon_models = PHYSFSX_readInt(fp);
 	{
 		const auto &&r = partial_range(Polygon_models, N_polygon_models);
@@ -380,6 +390,8 @@ void bm_read_all(PHYSFS_File * fp)
 		exit_modelnum = destroyed_exit_modelnum = N_polygon_models;
 }
 
+}
+
 int extra_bitmap_num = 0;
 
 static void bm_free_extra_objbitmaps()
@@ -400,6 +412,7 @@ static void bm_free_extra_objbitmaps()
 static void bm_free_extra_models()
 {
 	const auto base = std::min(N_D2_POLYGON_MODELS.value, exit_modelnum);
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	range_for (auto &p, partial_range(Polygon_models, base, exchange(N_polygon_models, base)))
 		free_model(p);
 }
@@ -407,6 +420,7 @@ static void bm_free_extra_models()
 //type==1 means 1.1, type==2 means 1.2 (with weapons)
 void bm_read_extra_robots(const char *fname, Mission::descent_version_type type)
 {
+	auto &Robot_joints = LevelSharedRobotJointState.Robot_joints;
 	int t,version;
 
 	auto fp = PHYSFSX_openReadBuffered(fname);
@@ -441,9 +455,10 @@ void bm_read_extra_robots(const char *fname, Mission::descent_version_type type)
 	//now read robot info
 
 	t = PHYSFSX_readInt(fp);
-	N_robot_types = N_D2_ROBOT_TYPES+t;
+	const auto N_robot_types = LevelSharedRobotInfoState.N_robot_types = N_D2_ROBOT_TYPES + t;
 	if (N_robot_types >= MAX_ROBOT_TYPES)
 		Error("Too many robots (%d) in <%s>.  Max is %d.",t,fname,MAX_ROBOT_TYPES-N_D2_ROBOT_TYPES);
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	range_for (auto &r, partial_range(Robot_info, N_D2_ROBOT_TYPES.value, N_robot_types))
 		robot_info_read(fp, r);
 
@@ -455,6 +470,7 @@ void bm_read_extra_robots(const char *fname, Mission::descent_version_type type)
 		jointpos_read(fp, r);
 
 	unsigned u = PHYSFSX_readInt(fp);
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	N_polygon_models = N_D2_POLYGON_MODELS+u;
 	if (N_polygon_models >= MAX_POLYGON_MODELS)
 		Error("Too many polygon models (%d) in <%s>.  Max is %d.",u,fname,MAX_POLYGON_MODELS-N_D2_POLYGON_MODELS);
@@ -488,6 +504,7 @@ int Robot_replacements_loaded = 0;
 
 void load_robot_replacements(const d_fname &level_name)
 {
+	auto &Robot_joints = LevelSharedRobotJointState.Robot_joints;
 	int t,i,j;
 	char ifile_name[FILENAME_LEN];
 
@@ -506,6 +523,8 @@ void load_robot_replacements(const d_fname &level_name)
 		Error("HXM! version too old (%d)",t);
 
 	t = PHYSFSX_readInt(fp);			//read number of robots
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
+	const auto N_robot_types = LevelSharedRobotInfoState.N_robot_types;
 	for (j=0;j<t;j++) {
 		i = PHYSFSX_readInt(fp);		//read robot number
 		if (i<0 || i>=N_robot_types)
@@ -521,6 +540,7 @@ void load_robot_replacements(const d_fname &level_name)
 		jointpos_read(fp, Robot_joints[i]);
 	}
 
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	t = PHYSFSX_readInt(fp);			//read number of polygon models
 	for (j=0;j<t;j++)
 	{
@@ -635,6 +655,7 @@ int load_exit_models()
 		con_puts(CON_NORMAL, "Can't load exit models!");
 		return 0;
 	}
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	if (auto exit_hamfile = PHYSFSX_openReadBuffered("exit.ham"))
 	{
 		exit_modelnum = N_polygon_models++;

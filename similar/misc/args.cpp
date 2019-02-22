@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -213,11 +213,11 @@ static void ReadCmdArgs(Inilist &ini, Arglist &Args)
 #endif
 		else if (!d_stricmp(p, "-nohogdir"))
 		{
-			/* No effect on non-Unix.  Ignore it so that players can
+			/* No effect if no DXX_SHAREPATH.  Ignore it so that players can
 			 * pass it via a cross-platform ini.
 			 */
-#if defined(__unix__)
-			CGameArg.SysNoHogDir = true;
+#if DXX_USE_SHAREPATH
+			GameArg.SysNoHogDir = true;
 #endif
 		}
 		else if (!d_stricmp(p, "-use_players_dir"))
@@ -400,6 +400,12 @@ static void ReadCmdArgs(Inilist &ini, Arglist &Args)
 				throw nesting_depth_exceeded();
 			ReadIniArgs(ini);
 		}
+#if defined(__APPLE__) && defined(__MACH__)
+		else if (!strncmp(p, "-psn", 4))
+		{
+			//do nothing/gobble it up
+		}
+#endif
 		else
 			throw unhandled_argument(std::move(*pp));
 	}
@@ -420,10 +426,12 @@ static void PostProcessGameArg()
 		PHYSFS_mount(CGameArg.SysMissionDir.c_str(), MISSION_DIR, 1);
 #endif
 
+#if SDL_MAJOR_VERSION == 1
 	static char sdl_disable_lock_keys[] = "SDL_DISABLE_LOCK_KEYS=0";
 	if (CGameArg.CtlNoStickyKeys) // Must happen before SDL_Init!
 		sdl_disable_lock_keys[sizeof(sdl_disable_lock_keys) - 2] = '1';
 	SDL_putenv(sdl_disable_lock_keys);
+#endif
 }
 
 static std::string ConstructIniStackExplanation(const Inilist &ini)

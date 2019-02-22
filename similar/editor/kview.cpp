@@ -73,7 +73,9 @@ int MoveAway()
 int ToggleChaseMode()
 {
 	Funky_chase_mode = !Funky_chase_mode;
-	set_view_target_from_segment(Cursegp);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	set_view_target_from_segment(vcvertptr, Cursegp);
     if (Funky_chase_mode == 1) {
         diagnostic_message("Chase mode ON.");
     }

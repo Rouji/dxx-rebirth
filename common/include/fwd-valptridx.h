@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -144,6 +144,7 @@ public:
 	 * the lack of checking.
 	 */
 	using typename specialized_types::allow_none_construction;
+	using typename specialized_types::rebind_policy;
 	typedef ptridx<ic>	icptridx;
 	typedef ptridx<im>	imptridx;
 	typedef ptridx<vc>	vcptridx;

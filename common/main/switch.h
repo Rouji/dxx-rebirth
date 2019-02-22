@@ -155,9 +155,6 @@ struct trigger : public prohibit_void_ptr<trigger>
 	uint8_t   num_links;  //how many doors, etc. linked to this
 #endif
 	fix     value;
-#if defined(DXX_BUILD_DESCENT_I)
-	int8_t		link_num;
-#endif
 	array<segnum_t, MAX_WALLS_PER_LINK>   seg;
 	array<short, MAX_WALLS_PER_LINK>   side;
 };
@@ -166,13 +163,14 @@ struct trigger : public prohibit_void_ptr<trigger>
 DXX_VALPTRIDX_DECLARE_SUBTYPE(dsx::, trigger, trgnum_t, MAX_TRIGGERS);
 namespace dsx {
 DXX_VALPTRIDX_DEFINE_SUBTYPE_TYPEDEFS(trigger, trg);
-DXX_VALPTRIDX_DEFINE_GLOBAL_FACTORIES(trigger, trg, Triggers);
 
+struct d_level_unique_trigger_state
+{
+	valptridx<trigger>::array_managed_type Triggers;
+};
 }
 
 constexpr std::integral_constant<uint8_t, 0xff> trigger_none{};
-
-#define Num_triggers	Triggers.get_count()
 
 extern void trigger_init();
 namespace dsx {

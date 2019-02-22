@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -72,7 +72,7 @@ using std::max;
 #if 0
 #define glmprintf(A) con_printf A
 #else
-#define glmprintf(A)	(void)(sizeof(con_printf A, 0))
+#define glmprintf(A)
 #endif
 
 #ifndef M_PI
@@ -363,6 +363,7 @@ static void ogl_texwrap(ogl_texture *const gltexture, const int state)
 
 void ogl_cache_polymodel_textures(const unsigned model_num)
 {
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	if (model_num >= Polygon_models.size())
 		return;
 	const auto &po = Polygon_models[model_num];
@@ -383,22 +384,22 @@ static void ogl_cache_vclip_textures(const vclip &vc)
 	}
 }
 
-static void ogl_cache_vclipn_textures(const unsigned i)
+static void ogl_cache_vclipn_textures(const d_vclip_array &Vclip, const unsigned i)
 {
 	if (i < Vclip.size())
 		ogl_cache_vclip_textures(Vclip[i]);
 }
 
-static void ogl_cache_weapon_textures(const unsigned weapon_type)
+static void ogl_cache_weapon_textures(const d_vclip_array &Vclip, const weapon_info_array &Weapon_info, const unsigned weapon_type)
 {
 	if (weapon_type >= Weapon_info.size())
 		return;
 	const auto &w = Weapon_info[weapon_type];
-	ogl_cache_vclipn_textures(w.flash_vclip);
-	ogl_cache_vclipn_textures(w.robot_hit_vclip);
-	ogl_cache_vclipn_textures(w.wall_hit_vclip);
+	ogl_cache_vclipn_textures(Vclip, w.flash_vclip);
+	ogl_cache_vclipn_textures(Vclip, w.robot_hit_vclip);
+	ogl_cache_vclipn_textures(Vclip, w.wall_hit_vclip);
 	if (w.render_type == WEAPON_RENDER_VCLIP)
-		ogl_cache_vclipn_textures(w.weapon_vclip);
+		ogl_cache_vclipn_textures(Vclip, w.weapon_vclip);
 	else if (w.render_type == WEAPON_RENDER_POLYMODEL)
 	{
 		ogl_cache_polymodel_textures(w.model_num);
@@ -416,7 +417,7 @@ void ogl_cache_level_textures(void)
 	
 	range_for (auto &ec, partial_const_range(Effects, Num_effects))
 	{
-		ogl_cache_vclipn_textures(ec.dest_vclip);
+		ogl_cache_vclipn_textures(Vclip, ec.dest_vclip);
 		if ((ec.changing_wall_texture == -1) && (ec.changing_object_texture==-1) )
 			continue;
 		if (ec.vc.num_frames>max_efx)
@@ -432,9 +433,9 @@ void ogl_cache_level_textures(void)
 		}
 		do_special_effects();
 
-		range_for (auto &&seg, vcsegptr)
+		range_for (const unique_segment &seg, vcsegptr)
 		{
-			range_for (auto &side, seg->sides)
+			range_for (auto &side, seg.sides)
 			{
 				const auto tmap1 = side.tmap_num;
 				const auto tmap2 = side.tmap_num2;
@@ -462,20 +463,21 @@ void ogl_cache_level_textures(void)
 	reset_special_effects();
 	init_special_effects();
 	{
+		auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 		// always have lasers, concs, flares.  Always shows player appearance, and at least concs are always available to disappear.
-		ogl_cache_weapon_textures(Primary_weapon_to_weapon_info[primary_weapon_index_t::LASER_INDEX]);
-		ogl_cache_weapon_textures(Secondary_weapon_to_weapon_info[CONCUSSION_INDEX]);
-		ogl_cache_weapon_textures(weapon_id_type::FLARE_ID);
-		ogl_cache_vclipn_textures(VCLIP_PLAYER_APPEARANCE);
-		ogl_cache_vclipn_textures(VCLIP_POWERUP_DISAPPEARANCE);
+		ogl_cache_weapon_textures(Vclip, Weapon_info, Primary_weapon_to_weapon_info[primary_weapon_index_t::LASER_INDEX]);
+		ogl_cache_weapon_textures(Vclip, Weapon_info, Secondary_weapon_to_weapon_info[CONCUSSION_INDEX]);
+		ogl_cache_weapon_textures(Vclip, Weapon_info, weapon_id_type::FLARE_ID);
+		ogl_cache_vclipn_textures(Vclip, VCLIP_PLAYER_APPEARANCE);
+		ogl_cache_vclipn_textures(Vclip, VCLIP_POWERUP_DISAPPEARANCE);
 		ogl_cache_polymodel_textures(Player_ship->model_num);
-		ogl_cache_vclipn_textures(Player_ship->expl_vclip_num);
+		ogl_cache_vclipn_textures(Vclip, Player_ship->expl_vclip_num);
 
 		range_for (const auto &&objp, vcobjptridx)
 		{
 			if (objp->type == OBJ_POWERUP && objp->render_type==RT_POWERUP)
 			{
-				ogl_cache_vclipn_textures(objp->rtype.vclip_info.vclip_num);
+				ogl_cache_vclipn_textures(Vclip, objp->rtype.vclip_info.vclip_num);
 				const auto id = get_powerup_id(objp);
 				primary_weapon_index_t p;
 				secondary_weapon_index_t s;
@@ -499,7 +501,7 @@ void ogl_cache_level_textures(void)
 					)
 				)
 				{
-					ogl_cache_weapon_textures(w);
+					ogl_cache_weapon_textures(Vclip, Weapon_info, w);
 				}
 			}
 			else if (objp->type != OBJ_NONE && objp->render_type==RT_POLYOBJ)
@@ -507,9 +509,9 @@ void ogl_cache_level_textures(void)
 				if (objp->type == OBJ_ROBOT)
 				{
 					auto &ri = Robot_info[get_robot_id(objp)];
-					ogl_cache_vclipn_textures(ri.exp1_vclip_num);
-					ogl_cache_vclipn_textures(ri.exp2_vclip_num);
-					ogl_cache_weapon_textures(ri.weapon_type);
+					ogl_cache_vclipn_textures(Vclip, ri.exp1_vclip_num);
+					ogl_cache_vclipn_textures(Vclip, ri.exp2_vclip_num);
+					ogl_cache_weapon_textures(Vclip, Weapon_info, ri.weapon_type);
 				}
 				if (objp->rtype.pobj_info.tmap_override != -1)
 				{
@@ -1752,15 +1754,13 @@ static int ogl_loadtexture(const palette_array_t &pal, const uint8_t *data, cons
 	return 0;
 }
 
-unsigned char decodebuf[1024*1024];
-
 void ogl_loadbmtexture_f(grs_bitmap &rbm, int texfilt, bool texanis, bool edgepad)
 {
 	assert(!rbm.get_flag_mask(BM_FLAG_PAGED_OUT));
 	assert(rbm.bm_data);
 	grs_bitmap *bm = &rbm;
-	while (bm->bm_parent)
-		bm=bm->bm_parent;
+	while (const auto bm_parent = bm->bm_parent)
+		bm = bm_parent;
 	if (bm->gltexture && bm->gltexture->handle > 0)
 		return;
 	auto buf=bm->get_bitmap_data();
@@ -1778,27 +1778,37 @@ void ogl_loadbmtexture_f(grs_bitmap &rbm, int texfilt, bool texanis, bool edgepa
 		}
 	}
 
+	array<uint8_t, 300*1024> decodebuf;
 	if (bm->get_flag_mask(BM_FLAG_RLE))
 	{
 		class bm_rle_expand_state
 		{
-			uint8_t *dbits = decodebuf;
+			uint8_t *dbits;
+			uint8_t *const ebits;
 		public:
+			bm_rle_expand_state(uint8_t *const b, uint8_t *const e) :
+				dbits(b), ebits(e)
+			{
+			}
 			uint8_t *get_begin_dbits() const
 			{
 				return dbits;
 			}
-			static uint8_t *get_end_dbits()
+			uint8_t *get_end_dbits() const
 			{
-				return end(decodebuf);
+				return ebits;
 			}
 			void consume_dbits(const unsigned w)
 			{
 				dbits += w;
 			}
 		};
-		bm_rle_expand(*bm).loop(bm_w, bm_rle_expand_state());
-		buf=decodebuf;
+		decodebuf = {};
+		buf = decodebuf.data();
+		if (!bm_rle_expand(*bm).loop(bm_w, bm_rle_expand_state(begin(decodebuf), end(decodebuf))))
+		{
+			con_printf(CON_URGENT, "error: insufficient space to decode %ux%hu bitmap.  Please report this as a bug.", bm_w, bm->bm_h);
+		}
 	}
 	ogl_loadtexture(gr_palette, buf, 0, 0, *bm->gltexture, bm->get_flags(), 0, texfilt, texanis, edgepad);
 }

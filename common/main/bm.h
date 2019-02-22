@@ -27,6 +27,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include <physfs.h>
 #include "maths.h"
+#include "fwd-vclip.h"
 
 struct bitmap_index;
 
@@ -93,7 +94,6 @@ struct player_ship;
 extern struct player_ship only_player_ship;
 constexpr struct player_ship *Player_ship = &only_player_ship;
 extern unsigned Num_cockpits;
-extern unsigned Num_tmaps;
 }
 
 namespace dsx {
@@ -102,8 +102,18 @@ extern array<bitmap_index, N_COCKPIT_BITMAPS> cockpit_bitmap;
 using tmap_xlate_table_array = array<short, MAX_TEXTURES>;
 extern tmap_xlate_table_array tmap_xlate_table;
 #endif
-using TmapInfo_array = array<tmap_info, MAX_TEXTURES>;
-extern TmapInfo_array TmapInfo;
+
+/* This is level-unique because hoard mode assumes it can overwrite a
+ * texture.
+ */
+struct d_level_unique_tmap_info_state
+{
+	using TmapInfo_array = array<tmap_info, MAX_TEXTURES>;
+	unsigned Num_tmaps;
+	TmapInfo_array TmapInfo;
+};
+
+extern d_level_unique_tmap_info_state LevelUniqueTmapInfoState;
 // Initializes the palette, bitmap system...
 void gamedata_close();
 }
@@ -152,16 +162,16 @@ void load_robot_replacements(const d_fname &level_name);
 
 namespace dsx {
 // Initializes all bitmaps from BITMAPS.TBL file.
-int gamedata_read_tbl(int pc_shareware);
+int gamedata_read_tbl(d_vclip_array &Vclip, int pc_shareware);
+
+void bm_read_all(d_vclip_array &Vclip, PHYSFS_File * fp);
+#if defined(DXX_BUILD_DESCENT_I)
+void properties_read_cmp(d_vclip_array &Vclip, PHYSFS_File * fp);
+#endif
 }
 #endif
 
-extern void bm_read_all(PHYSFS_File * fp);
-
 int load_exit_models();
-#if defined(DXX_BUILD_DESCENT_I)
-void properties_read_cmp(PHYSFS_File * fp);
-#endif
 int ds_load(int skip, const char * filename );
 int compute_average_pixel(grs_bitmap *n);
 

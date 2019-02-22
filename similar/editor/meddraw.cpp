@@ -86,9 +86,9 @@ static int     Search_mode=0;                      //if true, searching for segm
 static int Search_x,Search_y;
 static int	Automap_test=0;		//	Set to 1 to show wireframe in automap mode.
 
-static void draw_seg_objects(const vcsegptr_t seg)
+static void draw_seg_objects(grs_canvas &canvas, const unique_segment &seg)
 {
-	range_for (const auto obj, objects_in(*seg, vcobjptridx, vcsegptr))
+	range_for (const auto obj, objects_in(seg, vcobjptridx, vcsegptr))
 	{
 		auto sphere_point = g3_rotate_point(obj->pos);
 		const uint8_t color = (obj->type == OBJ_PLAYER && static_cast<icobjptridx_t::index_type>(obj) > 0)
@@ -97,7 +97,7 @@ static void draw_seg_objects(const vcsegptr_t seg)
 				? PLAYER_COLOR
 				: ROBOT_COLOR
 			);
-		g3_draw_sphere(*grd_curcanv, sphere_point, obj->size, color);
+		g3_draw_sphere(canvas, sphere_point, obj->size, color);
 	}
 }
 
@@ -112,13 +112,15 @@ static void draw_line(grs_canvas &canvas, const unsigned pnum0, const unsigned p
 }
 
 // ----------------------------------------------------------------------------
-static void draw_segment(grs_canvas &canvas, const vcsegptr_t seg, const uint8_t color)
+static void draw_segment(grs_canvas &canvas, const shared_segment &seg, const uint8_t color)
 {
-	if (seg->segnum == segment_none)		//this segment doesn't exitst
+	if (seg.segnum == segment_none)		//this segment doesn't exitst
 		return;
 
-	auto &svp = seg->verts;
-	if (!rotate_list(svp).uand)
+	auto &svp = seg.verts;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	if (!rotate_list(vcvertptr, svp).uand)
 	{		//all off screen?
 		for (unsigned i = 0; i < 4; ++i)
 			draw_line(canvas, svp[i], svp[i+4], color);
@@ -138,7 +140,9 @@ static void draw_segment(grs_canvas &canvas, const vcsegptr_t seg, const uint8_t
 static void check_segment(const vmsegptridx_t seg)
 {
 	auto &svp = seg->verts;
-	if (!rotate_list(svp).uand)
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	if (!rotate_list(vcvertptr, svp).uand)
 	{		//all off screen?
 #if DXX_USE_OGL
 		g3_end_frame();
@@ -176,10 +180,12 @@ static void check_segment(const vmsegptridx_t seg)
 }
 
 // ----------------------------------------------------------------------------
-static void draw_seg_side(const vcsegptr_t seg, int side, const uint8_t color)
+static void draw_seg_side(const shared_segment &seg, const unsigned side, const uint8_t color)
 {
-	auto &svp = seg->verts;
-	if (!rotate_list(svp).uand)
+	auto &svp = seg.verts;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	if (!rotate_list(vcvertptr, svp).uand)
 	{		//all off screen?
 		int i;
 
@@ -191,10 +197,12 @@ static void draw_seg_side(const vcsegptr_t seg, int side, const uint8_t color)
 	}
 }
 
-static void draw_side_edge(const vcsegptr_t seg,int side,int edge, const uint8_t color)
+static void draw_side_edge(const shared_segment &seg, const unsigned side, const unsigned edge, const uint8_t color)
 {
-	auto &svp = seg->verts;
-	if (!rotate_list(svp).uand)		//on screen?
+	auto &svp = seg.verts;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	if (!rotate_list(vcvertptr, svp).uand)		//on screen?
 	{
 		auto &stv = Side_to_verts[side];
 		draw_line(*grd_curcanv, svp[stv[edge]], svp[stv[(edge + 1) % 4]], color);
@@ -370,10 +378,12 @@ static void add_edge(int v0,int v1,ubyte type)
 }
 
 //adds a segment's edges to the edge list
-static void add_edges(const vcsegptridx_t seg)
+static void add_edges(const shared_segment &seg)
 {
-	auto &svp = seg->verts;
-	if (!rotate_list(svp).uand)
+	auto &svp = seg.verts;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	if (!rotate_list(vcvertptr, svp).uand)
 	{		//all off screen?
 		int	i,fn,vn;
 		int	flag;
@@ -382,9 +392,9 @@ static void add_edges(const vcsegptridx_t seg)
 		for (i=0;i<N_NORMAL_EDGES;i++) edge_flags[i]=ET_NOTUSED;
 		for (;i<N_EDGES_PER_SEGMENT;i++) edge_flags[i]=ET_NOTEXTANT;
 
-		range_for (auto &&e, enumerate(seg->sides))
+		range_for (auto &&e, enumerate(seg.sides))
 		{
-			auto sidep = &e.value;
+			auto &sidep = e.value;
 			int	num_vertices;
 			const auto v = create_all_vertex_lists(seg, sidep, e.idx);
 			const auto &num_faces = v.first;
@@ -398,7 +408,7 @@ static void add_edges(const vcsegptridx_t seg)
 				int	en;
 
 				//Note: normal check appears to be the wrong way since the normals points in, but we're looking from the outside
-				if (g3_check_normal_facing(vcvertptr(seg->verts[vertex_list[fn*3]]),sidep->normals[fn]))
+				if (g3_check_normal_facing(vcvertptr(seg.verts[vertex_list[fn*3]]), sidep.normals[fn]))
 					flag = ET_NOTFACING;
 				else
 					flag = ET_FACING;
@@ -422,17 +432,17 @@ static void add_edges(const vcsegptridx_t seg)
 
 		for (i=0; i<N_EDGES_PER_SEGMENT; i++)
 			if (i<N_NORMAL_EDGES || (edge_flags[i]!=ET_NOTEXTANT && Show_triangulations))
-				add_edge(seg->verts[edges[i]/8],seg->verts[edges[i]&7],edge_flags[i]);
-		
-
+				add_edge(seg.verts[edges[i] / 8], seg.verts[edges[i] & 7], edge_flags[i]);
 	}
 }
 
 // ----------------------------------------------------------------------------
-static void draw_trigger_side(const vcsegptr_t seg,int side, const uint8_t color)
+static void draw_trigger_side(const shared_segment &seg, const unsigned side, const uint8_t color)
 {
-	auto &svp = seg->verts;
-	if (!rotate_list(svp).uand)
+	auto &svp = seg.verts;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	if (!rotate_list(vcvertptr, svp).uand)
 	{		//all off screen?
 		// Draw diagonals
 		auto &stv = Side_to_verts[side];
@@ -441,10 +451,12 @@ static void draw_trigger_side(const vcsegptr_t seg,int side, const uint8_t color
 }
 
 // ----------------------------------------------------------------------------
-static void draw_wall_side(const vcsegptr_t seg,int side, const uint8_t color)
+static void draw_wall_side(const shared_segment &seg, const unsigned side, const uint8_t color)
 {
-	auto &svp = seg->verts;
-	if (!rotate_list(svp).uand)
+	auto &svp = seg.verts;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	if (!rotate_list(vcvertptr, svp).uand)
 	{		//all off screen?
 		// Draw diagonals
 		auto &stv = Side_to_verts[side];
@@ -464,9 +476,11 @@ static void draw_wall_side(const vcsegptr_t seg,int side, const uint8_t color)
 
 // ----------------------------------------------------------------------------------------------------------------
 // Draws special walls (for now these are just removable walls.)
-static void draw_special_wall(const vcsegptr_t seg, int side )
+static void draw_special_wall(const shared_segment &seg, const unsigned side)
 {
-	auto &w = *vcwallptr(seg->sides[side].wall_num);
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	auto &w = *vcwallptr(seg.sides[side].wall_num);
 	const auto get_color = [=]() {
 		const auto type = w.type;
 		if (type != WALL_OPEN)
@@ -515,7 +529,7 @@ static void draw_mine_sub(const vmsegptridx_t segnum,int depth, visited_segment_
 				const auto child_segnum = mine_ptr->children[side];
 				if (IS_CHILD(child_segnum))
 				{
-					if (mine_ptr->sides[side].wall_num != wall_none)
+					if (mine_ptr->shared_segment::sides[side].wall_num != wall_none)
 						draw_special_wall(mine_ptr, side);
 					draw_mine_sub(segnum.absolute_sibling(child_segnum), depth-1, visited);
 				}
@@ -555,7 +569,7 @@ static void draw_mine(const vmsegptridx_t mine_ptr,int depth)
 {
 	visited_segment_bitarray_t visited;
 
-	edge_list_size = min(Num_segments * 12, MAX_EDGES.value);		//make maybe smaller than max
+	edge_list_size = min(LevelSharedSegmentState.Num_segments * 12, MAX_EDGES.value);		//make maybe smaller than max
 
 	// clear edge list
 	clear_edge_list();
@@ -573,7 +587,7 @@ static void draw_mine(const vmsegptridx_t mine_ptr,int depth)
 //	A segment is drawn if its segnum != -1.
 static void draw_mine_all(int automap_flag)
 {
-	edge_list_size = min(Num_segments * 12, MAX_EDGES.value);		//make maybe smaller than max
+	edge_list_size = min(LevelSharedSegmentState.Num_segments * 12, MAX_EDGES.value);		//make maybe smaller than max
 
 	// clear edge list
 	clear_edge_list();
@@ -584,14 +598,14 @@ static void draw_mine_all(int automap_flag)
 	{
 		if (segp->segnum != segment_none)
 		{
-			range_for (auto &&e, enumerate(segp->sides))
+			range_for (auto &&e, enumerate(segp->shared_segment::sides))
 				if (e.value.wall_num != wall_none)
 					draw_special_wall(segp, e.idx);
 			if (Search_mode)
 				check_segment(segp);
 			else {
 				add_edges(segp);
-				draw_seg_objects(segp);
+				draw_seg_objects(*grd_curcanv, segp);
 			}
 		}
 	}
@@ -667,13 +681,15 @@ static int alloc_vert()
 {
 	int vn;
 
-	Assert(Num_vertices < MAX_SEGMENT_VERTICES);
+	const auto Num_vertices = LevelSharedVertexState.Num_vertices;
+	assert(Num_vertices < MAX_SEGMENT_VERTICES);
 
+	auto &Vertex_active = LevelSharedVertexState.get_vertex_active();
 	for (vn=0; (vn < Num_vertices) && Vertex_active[vn]; vn++) ;
 
 	Vertex_active[vn] = 1;
 
-	Num_vertices++;
+	++LevelSharedVertexState.Num_vertices;
 
 	return vn;
 }
@@ -681,8 +697,9 @@ static int alloc_vert()
 //frees a vertex
 static void free_vert(int vert_num)
 {
+	auto &Vertex_active = LevelSharedVertexState.get_vertex_active();
 	Vertex_active[vert_num] = 0;
-	Num_vertices--;
+	--LevelSharedVertexState.Num_vertices;
 }
 
 // -----------------------------------------------------------------------------
@@ -696,6 +713,9 @@ static void draw_coordinate_axes(void)
 
 	create_coordinate_axes_from_segment(Cursegp,Axes_verts);
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	auto &vmvertptr = Vertices.vmptr;
 	const auto &&av0 = vcvertptr(Axes_verts[0]);
 	const auto &&av1 = vcvertptr(Axes_verts[1]);
 	const auto &&av2 = vcvertptr(Axes_verts[2]);
@@ -744,7 +764,7 @@ static void draw_coordinate_axes(void)
 	vm_vec_add(vmvertptr(Axes_verts[13]), av12, tvec);
 	vm_vec_add(vmvertptr(Axes_verts[15]), av14, tvec);
 
-	rotate_list(Axes_verts);
+	rotate_list(vcvertptr, Axes_verts);
 
 	const uint8_t color = AXIS_COLOR;
 

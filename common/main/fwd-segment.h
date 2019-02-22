@@ -21,6 +21,8 @@ using segnum_t = uint16_t;
 }
 #ifdef dsx
 namespace dcx {
+struct shared_segment;
+struct unique_segment;
 struct segment;
 }
 DXX_VALPTRIDX_DECLARE_SUBTYPE(dcx::, segment, segnum_t, MAX_SEGMENTS);
@@ -80,7 +82,8 @@ struct uvl;
 enum side_type : uint8_t;
 
 using wallnum_t = uint16_t;
-struct side;
+struct shared_side;
+struct unique_side;
 
 struct vertex;
 using vertnum_t = uint32_t;
@@ -120,15 +123,15 @@ DXX_VALPTRIDX_DEFINE_SUBTYPE_TYPEDEFS(vertex, vert);
 struct count_segment_array_t;
 struct group;
 
-extern unsigned Num_segments;
-extern unsigned Num_vertices;
-
+struct d_level_shared_vertex_state;
+struct d_level_shared_segment_state;
+struct d_level_unique_segment_state;
 
 #define Side_to_verts Side_to_verts_int
 extern const array<array<unsigned, 4>, MAX_SIDES_PER_SEGMENT>  Side_to_verts_int;    // Side_to_verts[my_side] is list of vertices forming side my_side.
 extern const array<uint8_t, MAX_SIDES_PER_SEGMENT> Side_opposite;                                // Side_opposite[my_side] returns side opposite cube from my_side.
 
-void segment_side_wall_tmap_write(PHYSFS_File *fp, const side &side);
+void segment_side_wall_tmap_write(PHYSFS_File *fp, const shared_side &sside, const unique_side &uside);
 }
 void add_segment_to_group(segnum_t segment_num, int group_num);
 
@@ -136,15 +139,15 @@ void add_segment_to_group(segnum_t segment_num, int group_num);
 namespace dsx {
 struct delta_light;
 struct dl_index;
+struct d_level_shared_destructible_light_state;
+struct d_level_shared_segment_state;
 
 constexpr std::integral_constant<std::size_t, 32000> MAX_DELTA_LIGHTS{}; // Original D2: 10000;
 
 constexpr std::integral_constant<fix, 2048> DL_SCALE{};    // Divide light to allow 3 bits integer, 5 bits fraction.
 
-extern array<delta_light, MAX_DELTA_LIGHTS> Delta_lights;
+using d_delta_light_array = array<delta_light, MAX_DELTA_LIGHTS>;
 
-int subtract_light(vmsegptridx_t segnum, sidenum_fast_t sidenum);
-int add_light(vmsegptridx_t segnum, sidenum_fast_t sidenum);
 void clear_light_subtracted();
 
 void segment2_write(vcsegptr_t s2, PHYSFS_File *fp);
@@ -160,6 +163,8 @@ using dlindexnum_t = uint16_t;
 DXX_VALPTRIDX_DECLARE_SUBTYPE(dsx::, dl_index, dlindexnum_t, 500);
 namespace dsx {
 DXX_VALPTRIDX_DEFINE_SUBTYPE_TYPEDEFS(dl_index, dlindex);
+int subtract_light(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, vmsegptridx_t segnum, sidenum_fast_t sidenum);
+int add_light(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, vmsegptridx_t segnum, sidenum_fast_t sidenum);
 }
 #endif
 

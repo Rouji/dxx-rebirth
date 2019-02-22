@@ -31,13 +31,18 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include <cstdint>
 #include "fwd-object.h"
 #include "fwd-segment.h"
+#include "fwd-vclip.h"
 #include "fwd-vecmat.h"
 #include "fwd-window.h"
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 void collide_two_objects(vmobjptridx_t A, vmobjptridx_t B, vms_vector &collision_point);
-window_event_result collide_object_with_wall(vmobjptridx_t A, fix hitspeed, vmsegptridx_t hitseg, short hitwall, const vms_vector &hitpt);
 namespace dsx {
+window_event_result collide_object_with_wall(
+#if defined(DXX_BUILD_DESCENT_II)
+	const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState,
+#endif
+	vmobjptridx_t A, fix hitspeed, vmsegptridx_t hitseg, short hitwall, const vms_vector &hitpt);
 void apply_damage_to_player(object &player, icobjptridx_t killer, fix damage, uint8_t possibly_friendly);
 }
 
@@ -57,9 +62,9 @@ void collide_player_and_materialization_center(vmobjptridx_t objp);
 #endif
 void collide_robot_and_materialization_center(vmobjptridx_t objp);
 
-bool scrape_player_on_wall(vmobjptridx_t obj, vmsegptridx_t hitseg, short hitwall, const vms_vector &hitpt);
 #ifdef dsx
 namespace dsx {
+bool scrape_player_on_wall(vmobjptridx_t obj, vmsegptridx_t hitseg, unsigned hitwall, const vms_vector &hitpt);
 int maybe_detonate_weapon(vmobjptridx_t obj0p, vmobjptr_t obj, const vms_vector &pos);
 
 }
@@ -69,11 +74,11 @@ void collide_player_and_nasty_robot(vmobjptridx_t player, vmobjptridx_t robot, c
 void net_destroy_controlcen(imobjptridx_t controlcen);
 void collide_live_local_player_and_powerup(const vmobjptridx_t powerup);
 #if defined(DXX_BUILD_DESCENT_I)
-#define check_effect_blowup(seg,side,pnt,blower,force_blowup_flag,remote) check_effect_blowup(seg,side,pnt)
+#define check_effect_blowup(DestructibleLightsState,Vclip,seg,side,pnt,blower,force_blowup_flag,remote) check_effect_blowup(Vclip,seg,side,pnt)
 #endif
 #ifdef dsx
 namespace dsx {
-int check_effect_blowup(vmsegptridx_t seg,int side,const vms_vector &pnt, const laser_parent &blower, int force_blowup_flag, int remote);
+int check_effect_blowup(const d_level_shared_destructible_light_state &LevelSharedDestructibleLightState, const d_vclip_array &Vclip, vmsegptridx_t seg,int side,const vms_vector &pnt, const laser_parent &blower, int force_blowup_flag, int remote);
 }
 #endif
 void apply_damage_to_controlcen(vmobjptridx_t controlcen, fix damage, vcobjptr_t who);
@@ -89,13 +94,13 @@ enum class volatile_wall_result : int8_t
 	water,
 #endif
 };
-}
 #if defined(DXX_BUILD_DESCENT_II)
 window_event_result do_final_boss_frame(void);
 void do_final_boss_hacks(void);
-volatile_wall_result check_volatile_wall(vmobjptridx_t obj, const segment &seg, unsigned sidenum);
+volatile_wall_result check_volatile_wall(vmobjptridx_t obj, const unique_side &seg);
 extern int	Final_boss_is_dead;
 #endif
+}
 #endif
 #endif
 

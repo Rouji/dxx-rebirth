@@ -597,12 +597,14 @@ static int select_next_window_function(int w)
 {
 	Assert(w==0 || w==1);
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	switch (PlayerCfg.Cockpit3DView[w]) {
 		case CV_NONE:
 			PlayerCfg.Cockpit3DView[w] = CV_REAR;
 			break;
 		case CV_REAR:
-			if (find_escort() != object_none) {
+			if (find_escort(vmobjptridx, Robot_info) != object_none)
+			{
 				PlayerCfg.Cockpit3DView[w] = CV_ESCORT;
 				break;
 			}
@@ -741,7 +743,7 @@ static window_event_result HandleSystemKey(int key)
 		KEY_MAC(case KEY_COMMAND+KEY_3:)
 
 		case KEY_F3:
-			if (Player_dead_state == player_dead_state::no && Viewer->type==OBJ_PLAYER) //if (!(Guided_missile[Player_num] && Guided_missile[Player_num]->type==OBJ_WEAPON && Guided_missile[Player_num]->id==GUIDEDMISS_ID && Guided_missile[Player_num]->signature==Guided_missile_sig[Player_num] && PlayerCfg.GuidedInBigWindow))
+			if (Player_dead_state == player_dead_state::no && Viewer->type == OBJ_PLAYER)
 			{
 				toggle_cockpit();
 			}
@@ -860,11 +862,13 @@ static window_event_result HandleSystemKey(int key)
 			 */
 		case KEY_ALTED + KEY_SHIFTED + KEY_F9:
 		KEY_MAC(case KEY_COMMAND+KEY_E:)
+#if DXX_USE_SDL_REDBOOK_AUDIO
 			if (GameCfg.MusicType == MUSIC_TYPE_REDBOOK)
 			{
 				songs_stop_all();
 				RBAEjectDisk();
 			}
+#endif
 			break;
 
 		case KEY_ALTED + KEY_SHIFTED + KEY_F10:
@@ -1013,6 +1017,7 @@ static void kill_all_robots(void)
 {
 	int	dead_count=0;
 	//int	boss_index = -1;
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 
 	// Kill all bots except for Buddy bot and boss.  However, if only boss and buddy left, kill boss.
 	range_for (const auto &&objp, vmobjptr)
@@ -1075,26 +1080,30 @@ static void kill_and_so_forth(fvmobjptridx &vmobjptridx, fvmsegptridx &vmsegptri
 
 	do_controlcen_destroyed_stuff(object_none);
 
-	for (trgnum_t i = 0; i < Num_triggers; i++)
+	auto &Triggers = LevelUniqueWallSubsystemState.Triggers;
+	auto &vctrgptr = Triggers.vcptr;
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
+	for (trgnum_t i = 0; i < Triggers.get_count(); i++)
 	{
 		const auto &&t = vctrgptr(i);
 		if (trigger_is_exit(t))
 		{
-			range_for (const auto &&w, vcwallptr)
+			range_for (const auto &&wp, vcwallptr)
 			{
-				if (w->trigger == i)
+				auto &w = *wp;
+				if (w.trigger == i)
 				{
-					const auto &&segp = vmsegptridx(w->segnum);
+					const auto &&segp = vmsegptridx(w.segnum);
+					auto &Vertices = LevelSharedVertexState.get_vertices();
+					auto &vcvertptr = Vertices.vcptr;
 					compute_segment_center(vcvertptr, ConsoleObject->pos, segp);
 					obj_relink(vmobjptr, vmsegptr, vmobjptridx(ConsoleObject), segp);
-					goto kasf_done;
+					return;
 				}
 			}
 		}
 	}
-
-kasf_done: ;
-
 }
 
 #ifndef RELEASE
@@ -1121,6 +1130,7 @@ static void kill_all_snipers(void)
 static void kill_thief(void) __attribute_used;
 static void kill_thief(void)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	//	Kill thief.
 	range_for (const auto &&objp, vmobjptr)
 	{
@@ -1136,6 +1146,7 @@ static void kill_thief(void)
 static void kill_buddy(void) __attribute_used;
 static void kill_buddy(void)
 {
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	//	Kill buddy.
 	range_for (const auto &&objp, vmobjptr)
 	{
@@ -1197,11 +1208,13 @@ static window_event_result HandleTestKey(fvmsegptridx &vmsegptridx, int key)
 		{
 			static int i = 0;
 			const auto &&segp = vmsegptridx(ConsoleObject->segnum);
+			auto &Vertices = LevelSharedVertexState.get_vertices();
+			auto &vcvertptr = Vertices.vcptr;
 			const auto &&new_obj = create_morph_robot(segp, compute_segment_center(vcvertptr, segp), i);
 			if (new_obj != object_none)
 				morph_start( new_obj );
 			i++;
-			if (i >= N_robot_types)
+			if (i >= LevelSharedRobotInfoState.N_robot_types)
 				i = 0;
 			break;
 		}
@@ -1747,8 +1760,8 @@ class cheat_menu_bit_invulnerability :
 	public menu_bit_wrapper_t<player_flags, std::integral_constant<PLAYER_FLAG, PLAYER_FLAGS_INVULNERABLE>>
 {
 public:
-	cheat_menu_bit_invulnerability(player &plr) :
-		reference_wrapper(vmobjptr(plr.objnum)->ctype.player_info),
+	cheat_menu_bit_invulnerability(object &player) :
+		reference_wrapper(player.ctype.player_info),
 		menu_bit_wrapper_t(get().powerup_flags, {})
 	{
 	}
@@ -1770,8 +1783,8 @@ class cheat_menu_bit_cloak :
 	public menu_bit_wrapper_t<player_flags, std::integral_constant<PLAYER_FLAG, PLAYER_FLAGS_CLOAKED>>
 {
 public:
-	cheat_menu_bit_cloak(player &plr) :
-		reference_wrapper(vmobjptr(plr.objnum)->ctype.player_info),
+	cheat_menu_bit_cloak(object &player) :
+		reference_wrapper(player.ctype.player_info),
 		menu_bit_wrapper_t(get().powerup_flags, {})
 	{
 	}
@@ -1803,8 +1816,8 @@ public:
 #endif
 
 #define DXX_WIMP_MENU(VERB)	\
-	DXX_MENUITEM(VERB, CHECK, TXT_INVULNERABILITY, opt_invul, cheat_menu_bit_invulnerability(plr))	\
-	DXX_MENUITEM(VERB, CHECK, TXT_CLOAKED, opt_cloak, cheat_menu_bit_cloak(plr))	\
+	DXX_MENUITEM(VERB, CHECK, TXT_INVULNERABILITY, opt_invul, cheat_menu_bit_invulnerability(plrobj))	\
+	DXX_MENUITEM(VERB, CHECK, TXT_CLOAKED, opt_cloak, cheat_menu_bit_cloak(plrobj))	\
 	DXX_MENUITEM(VERB, CHECK, "BLUE KEY", opt_key_blue, menu_bit_wrapper(player_info.powerup_flags, PLAYER_FLAGS_BLUE_KEY))	\
 	DXX_MENUITEM(VERB, CHECK, "GOLD KEY", opt_key_gold, menu_bit_wrapper(player_info.powerup_flags, PLAYER_FLAGS_GOLD_KEY))	\
 	DXX_MENUITEM(VERB, CHECK, "RED KEY", opt_key_red, menu_bit_wrapper(player_info.powerup_flags, PLAYER_FLAGS_RED_KEY))	\
@@ -1824,7 +1837,6 @@ static void do_cheat_menu()
 	int mmn;
 	array<newmenu_item, DXX_WIMP_MENU(COUNT)> m;
 	char score_text[sizeof("2147483647")];
-	auto &plr = get_local_player();
 	auto &plrobj = get_local_plrobj();
 	auto &player_info = plrobj.ctype.player_info;
 	snprintf(score_text, sizeof(score_text), "%d", player_info.mission.score);

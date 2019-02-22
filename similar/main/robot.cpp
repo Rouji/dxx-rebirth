@@ -35,16 +35,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "partial_range.h"
 
 namespace dcx {
-unsigned N_robot_types;
 unsigned N_robot_joints;
-}
-
-namespace dsx {
-//	Robot stuff
-array<robot_info, MAX_ROBOT_TYPES> Robot_info;
-
-//Big array of joint positions.  All robots index into this array
-array<jointpos, MAX_ROBOT_JOINTS> Robot_joints;
 }
 
 #if 0
@@ -63,9 +54,11 @@ namespace dsx {
 void calc_gun_point(vms_vector &gun_point, const object_base &obj, unsigned gun_num)
 {
 	Assert(obj.render_type == RT_POLYOBJ || obj.render_type == RT_MORPH);
-	Assert(get_robot_id(obj) < N_robot_types);
+	assert(get_robot_id(obj) < LevelSharedRobotInfoState.N_robot_types);
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	const auto &r = Robot_info[get_robot_id(obj)];
+	auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 	const auto &pm = Polygon_models[r.model_num];
 
 	if (gun_num >= r.n_guns)
@@ -94,7 +87,7 @@ void calc_gun_point(vms_vector &gun_point, const object_base &obj, unsigned gun_
 
 //fills in ptr to list of joints, and returns the number of joints in list
 //takes the robot type (object id), gun number, and desired state
-partial_range_t<const jointpos *> robot_get_anim_state(const array<robot_info, MAX_ROBOT_TYPES> &robot_info, const array<jointpos, MAX_ROBOT_JOINTS> &robot_joints, const unsigned robot_type, const unsigned gun_num, const unsigned state)
+partial_range_t<const jointpos *> robot_get_anim_state(const d_level_shared_robot_info_state::d_robot_info_array &robot_info, const array<jointpos, MAX_ROBOT_JOINTS> &robot_joints, const unsigned robot_type, const unsigned gun_num, const unsigned state)
 {
 	auto &rirt = robot_info[robot_type];
 	assert(gun_num <= rirt.n_guns);
@@ -105,14 +98,16 @@ partial_range_t<const jointpos *> robot_get_anim_state(const array<robot_info, M
 
 #ifndef NDEBUG
 //for test, set a robot to a specific state
-static void set_robot_state(const vmobjptr_t obj,int state) __attribute_used;
-static void set_robot_state(const vmobjptr_t obj,int state)
+static void set_robot_state(object_base &obj, const unsigned state) __attribute_used;
+static void set_robot_state(object_base &obj, const unsigned state)
 {
+	auto &Robot_joints = LevelSharedRobotJointState.Robot_joints;
 	int g,j,jo;
 	jointlist *jl;
 
-	Assert(obj->type == OBJ_ROBOT);
+	assert(obj.type == OBJ_ROBOT);
 
+	auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 	auto &ri = Robot_info[get_robot_id(obj)];
 
 	for (g = 0; g < ri.n_guns + 1; g++)
@@ -127,8 +122,7 @@ static void set_robot_state(const vmobjptr_t obj,int state)
 
 			jn = Robot_joints[jo].jointnum;
 
-			obj->rtype.pobj_info.anim_angles[jn] = Robot_joints[jo].angles;
-
+			obj.rtype.pobj_info.anim_angles[jn] = Robot_joints[jo].angles;
 		}
 	}
 }
@@ -138,6 +132,7 @@ static void set_robot_state(const vmobjptr_t obj,int state)
 //be filled in.
 void robot_set_angles(robot_info *r,polymodel *pm,array<array<vms_angvec, MAX_SUBMODELS>, N_ANIM_STATES> &angs)
 {
+	auto &Robot_joints = LevelSharedRobotJointState.Robot_joints;
 	int g,state;
 	array<int, MAX_SUBMODELS> gun_nums;			//which gun each submodel is part of
 

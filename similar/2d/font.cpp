@@ -507,15 +507,18 @@ static void ogl_init_font(grs_font * font)
 	int oglflags = OGL_FLAG_ALPHA;
 	int	nchars = font->ft_maxchar-font->ft_minchar+1;
 	int w,h,tw,th,curx=0,cury=0;
-	uint8_t *data;
 	int gap=1; // x/y offset between the chars so we can filter
 
 	th = tw = 0xffff;
 
 	ogl_font_choose_size(font,gap,&tw,&th);
-	MALLOC(data, ubyte, tw*th);
-	memset(data, TRANSPARENCY_COLOR, tw * th); // map the whole data with transparency so we won't have borders if using gap
-	gr_init_bitmap(font->ft_parent_bitmap,bm_mode::linear,0,0,tw,th,tw,data);
+	{
+		RAIIdmem<uint8_t[]> data;
+		const unsigned length = tw * th;
+		MALLOC(data, uint8_t, length);
+		std::fill_n(data.get(), TRANSPARENCY_COLOR, length); // map the whole data with transparency so we won't have borders if using gap
+		gr_init_main_bitmap(font->ft_parent_bitmap, bm_mode::linear, 0, 0, tw, th, tw, std::move(data));
+	}
 	gr_set_transparent(font->ft_parent_bitmap, 1);
 
 	if (!(font->ft_flags & FT_COLOR))
@@ -770,6 +773,11 @@ void gr_ustring(grs_canvas &canvas, const grs_font &cv_font, const int x, const 
 
 void gr_get_string_size(const grs_font &cv_font, const char *s, int *const string_width, int *const string_height, int *const average_width)
 {
+	gr_get_string_size(cv_font, s, string_width, string_height, average_width, UINT_MAX);
+}
+
+void gr_get_string_size(const grs_font &cv_font, const char *s, int *const string_width, int *const string_height, int *const average_width, const unsigned max_chars_per_line)
+{
 	float longest_width=0.0,string_width_f=0.0;
 	unsigned lines = 0;
 	if (average_width)
@@ -778,6 +786,7 @@ void gr_get_string_size(const grs_font &cv_font, const char *s, int *const strin
 		return;
 	if (s)
 	{
+		unsigned remaining_chars_this_line = max_chars_per_line;
 		while (*s)
 		{
 			if (*s == '\n')
@@ -792,12 +801,15 @@ void gr_get_string_size(const grs_font &cv_font, const char *s, int *const strin
 				lines += s - os;
 				if (!*s)
 					break;
+				remaining_chars_this_line = max_chars_per_line;
 			}
 
 			const auto &result = get_char_width<float>(cv_font, s[0], s[1]);
 			const auto &spacing = result.spacing;
 			string_width_f += spacing;
 			s++;
+			if (!--remaining_chars_this_line)
+				break;
 		}
 	}
 	if (string_width)
@@ -844,9 +856,6 @@ void gr_close_font(std::unique_ptr<grs_font> font)
 {
 	if (font)
 	{
-#if DXX_USE_OGL
-		gr_free_bitmap_data(font->ft_parent_bitmap);
-#endif
 		//find font in list
 		if (!(font->ft_flags & FT_COLOR))
 			return;
@@ -1054,9 +1063,6 @@ void gr_remap_font(grs_font *font, const char *fontname)
 		return;
 	if (!(n->ft_flags & FT_COLOR))
 		return;
-#if DXX_USE_OGL
-	gr_free_bitmap_data(font->ft_parent_bitmap);
-#endif
 	*font = std::move(*n.get());
 #if DXX_USE_OGL
 	ogl_init_font(font);

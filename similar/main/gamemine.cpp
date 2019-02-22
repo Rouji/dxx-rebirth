@@ -64,7 +64,7 @@ namespace dsx {
 /*
  * reads a segment2 structure from a PHYSFS_File
  */
-static void segment2_read(segment &s2, PHYSFS_File *fp)
+static void segment2_read(shared_segment &s2, unique_segment &u2, PHYSFS_File *fp)
 {
 	s2.special = PHYSFSX_readByte(fp);
 	s2.matcen_num = PHYSFSX_readByte(fp);
@@ -78,35 +78,14 @@ static void segment2_read(segment &s2, PHYSFS_File *fp)
 #elif defined(DXX_BUILD_DESCENT_II)
 	s2.s2_flags = s2_flags;
 #endif
-	s2.static_light = PHYSFSX_readFix(fp);
+	u2.static_light = PHYSFSX_readFix(fp);
 }
 
 #if defined(DXX_BUILD_DESCENT_I)
-typedef segment v16_segment;
 #elif defined(DXX_BUILD_DESCENT_II)
 fix Level_shake_frequency = 0, Level_shake_duration = 0;
 segnum_t Secret_return_segment;
 vms_matrix Secret_return_orient;
-
-struct v16_segment {
-#if DXX_USE_EDITOR
-	short   segnum;             // segment number, not sure what it means
-	#endif
-	side    sides[MAX_SIDES_PER_SEGMENT];       // 6 sides
-	short   children[MAX_SIDES_PER_SEGMENT];    // indices of 6 children segments, front, left, top, right, bottom, back
-	short   verts[MAX_VERTICES_PER_SEGMENT];    // vertex ids of 4 front and 4 back vertices
-	#ifdef  EDITOR
-	short   group;              // group number to which the segment belongs.
-	#endif
-	short   objects;            // pointer to objects in this segment
-	ubyte   special;            // what type of center this is
-	sbyte   matcen_num;         // which center segment is associated with.
-	short   value;
-	fix     static_light;       // average static light in segment
-#if !DXX_USE_EDITOR
-	short   pad;                // make structure longword aligned
-	#endif
-};
 
 int d1_pig_present = 0; // can descent.pig from descent 1 be loaded?
 
@@ -417,8 +396,8 @@ struct me mine_editor;
 namespace dsx {
 int load_mine_data(PHYSFS_File *LoadFile)
 {
+	auto &TmapInfo = LevelUniqueTmapInfoState.TmapInfo;
 	char old_tmap_list[MAX_TEXTURES][FILENAME_LEN];
-	short tmap_xlate;
 	int 	translate;
 	char 	*temptr;
 	int	mine_start = PHYSFS_tell(LoadFile);
@@ -613,6 +592,7 @@ int load_mine_data(PHYSFS_File *LoadFile)
 		if (PHYSFSX_fseek( LoadFile, mine_fileinfo.vertex_offset, SEEK_SET ))
 			Error( "Error seeking to vertex_offset in gamemine.c" );
 
+		auto &Vertices = LevelSharedVertexState.get_vertices();
 		range_for (auto &i, partial_range(Vertices, mine_fileinfo.vertex_howmany))
 		{
 			// Set the default values for this vertex
@@ -637,6 +617,8 @@ int load_mine_data(PHYSFS_File *LoadFile)
 
 	// [commented out by mk on 11/20/94 (weren't we supposed to hit final in October?) because it looks redundant.  I think I'll test it now...]  fuelcen_reset();
 
+	auto &Walls = LevelUniqueWallSubsystemState.Walls;
+	auto &vcwallptr = Walls.vcptr;
 	if ( (mine_fileinfo.segment_offset > -1) && (mine_fileinfo.segment_howmany > 0))	{
 
 		if (PHYSFSX_fseek( LoadFile, mine_fileinfo.segment_offset,SEEK_SET ))
@@ -655,27 +637,30 @@ int load_mine_data(PHYSFS_File *LoadFile)
 #if defined(DXX_BUILD_DESCENT_II)
 			if (mine_top_fileinfo.fileinfo_version >= 20)
 			{
-				if (PHYSFS_read(LoadFile, &*i, mine_fileinfo.segment_sizeof, 1) != 1)
-					Error("Unable to read segment %i\n", ii);
+				/*
+				 * The format of v20 segment once matched `struct segment`, but
+				 * this was not enforced with a `static_assert` or even
+				 * commented.  The layout of `struct segment` has since changed
+				 * at least five times.  See commit
+				 * 2665869c24855040837b1864daedd4cc13ab1793 for details.
+				 */
+				Error("Sorry, v20 segment support is broken.");
 			}
 			else
 #endif
 			if (mine_top_fileinfo.fileinfo_version >= 16)
 			{
+				Error("Sorry, v16 segment support is broken.");
+#if 0
 				v16_segment v16_seg;
 
 				Assert(mine_fileinfo.segment_sizeof == sizeof(v16_seg));
 
-				if (PHYSFS_read( LoadFile, &v16_seg, mine_fileinfo.segment_sizeof, 1 )!=1)
-					Error( "Error reading segments in gamemine.c" );
-
 #if defined(DXX_BUILD_DESCENT_I)
 				*i = v16_seg;
 #elif defined(DXX_BUILD_DESCENT_II)
-#if DXX_USE_EDITOR
 				i->segnum = v16_seg.segnum;
 				// -- Segments[i].pad = v16_seg.pad;
-				#endif
 
 				for (int j=0; j<MAX_SIDES_PER_SEGMENT; j++)
 					i->sides[j] = v16_seg.sides[j];
@@ -692,6 +677,7 @@ int load_mine_data(PHYSFS_File *LoadFile)
 				i->matcen_num = v16_seg.matcen_num;
 				i->static_light = v16_seg.static_light;
 #endif
+#endif
 				fuelcen_activate(i);
 			}
 			else 
@@ -705,25 +691,26 @@ int load_mine_data(PHYSFS_File *LoadFile)
 			if (translate == 1)
 				for (int j=0;j<MAX_SIDES_PER_SEGMENT;j++) {
 					unsigned short orient;
-					tmap_xlate = i->sides[j].tmap_num;
-					i->sides[j].tmap_num = tmap_xlate_table[tmap_xlate];
-					const auto render = (WALL_IS_DOORWAY(i,j) & WID_RENDER_FLAG);
+					auto &iusidej = i->unique_segment::sides[j];
+					const auto tmap_xlate = iusidej.tmap_num;
+					iusidej.tmap_num = tmap_xlate_table[tmap_xlate];
+					const auto render = (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, i, i, j) & WID_RENDER_FLAG);
 					if (render)
-						if (i->sides[j].tmap_num < 0)	{
+						if (iusidej.tmap_num < 0)	{
 							Int3();
-							i->sides[j].tmap_num = NumTextures-1;
+							iusidej.tmap_num = NumTextures-1;
 						}
-					tmap_xlate = i->sides[j].tmap_num2 & TMAP_NUM_MASK;
-					orient = i->sides[j].tmap_num2 & (~TMAP_NUM_MASK);
-					if (tmap_xlate != 0) {
-						int xlated_tmap = tmap_xlate_table[tmap_xlate];
+					orient = iusidej.tmap_num2 & (~TMAP_NUM_MASK);
+					if (const auto tmap2_xlate = iusidej.tmap_num2 & TMAP_NUM_MASK)
+					{
+						int xlated_tmap = tmap_xlate_table[tmap2_xlate];
 
+						iusidej.tmap_num2 = xlated_tmap | orient;
 						if (render)
 							if (xlated_tmap <= 0)	{
 								Int3();
-								i->sides[j].tmap_num2 = NumTextures-1;
+								iusidej.tmap_num2 = NumTextures-1;
 							}
-						i->sides[j].tmap_num2 = xlated_tmap | orient;
 					}
 				}
 		}
@@ -732,7 +719,7 @@ int load_mine_data(PHYSFS_File *LoadFile)
 		if (mine_top_fileinfo.fileinfo_version >= 20)
 			range_for (const auto &&segp, vmsegptridx)
 			{
-				segment2_read(segp, LoadFile);
+				segment2_read(segp, segp, LoadFile);
 				fuelcen_activate(segp);
 			}
 #endif
@@ -751,14 +738,15 @@ int load_mine_data(PHYSFS_File *LoadFile)
 	{
 		if (PHYSFSX_fseek( LoadFile, mine_editor.newsegment_offset,SEEK_SET ))
 			Error( "Error seeking to newsegment_offset in gamemine.c" );
-		if (PHYSFS_read( LoadFile, &New_segment, mine_editor.newsegment_size,1 )!=1)
-			Error( "Error reading new_segment in gamemine.c" );
+		Error("Sorry, v20 segment support is broken.");
 	}
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
 	if ( (mine_fileinfo.newseg_verts_offset > -1) && (mine_fileinfo.newseg_verts_howmany > 0))
 	{
 		if (PHYSFSX_fseek( LoadFile, mine_fileinfo.newseg_verts_offset, SEEK_SET ))
 			Error( "Error seeking to newseg_verts_offset in gamemine.c" );
+		auto &vmvertptr = Vertices.vmptr;
 		for (unsigned i = 0; i < mine_fileinfo.newseg_verts_howmany; ++i)
 		{
 			// Set the default values for this vertex
@@ -795,25 +783,25 @@ int load_mine_data(PHYSFS_File *LoadFile)
 
 	#endif
 
-	Num_vertices = mine_fileinfo.vertex_howmany;
-	Num_segments = mine_fileinfo.segment_howmany;
-	Vertices.set_count(Num_vertices);
-	Segments.set_count(Num_segments);
+	LevelSharedVertexState.Num_vertices = mine_fileinfo.vertex_howmany;
+	Vertices.set_count(LevelSharedVertexState.Num_vertices);
+	LevelSharedSegmentState.Num_segments = mine_fileinfo.segment_howmany;
+	Segments.set_count(LevelSharedSegmentState.Num_segments);
 
-	reset_objects(ObjectState, 1);		//one object, the player
+	reset_objects(LevelUniqueObjectState, 1);		//one object, the player
 
 #if DXX_USE_EDITOR
 	Vertices.set_count(MAX_SEGMENT_VERTICES);
 	Segments.set_count(MAX_SEGMENTS);
 	set_vertex_counts();
-	Vertices.set_count(Num_vertices);
-	Segments.set_count(Num_segments);
+	Vertices.set_count(LevelSharedVertexState.Num_vertices);
+	Segments.set_count(LevelSharedSegmentState.Num_segments);
 
 	warn_if_concave_segments();
 	#endif
 
 #if DXX_USE_EDITOR
-		validate_segment_all();
+	validate_segment_all(LevelSharedSegmentState);
 	#endif
 
 	//create_local_segment_data();
@@ -831,36 +819,36 @@ int load_mine_data(PHYSFS_File *LoadFile)
 
 #define COMPILED_MINE_VERSION 0
 
-static void read_children(const vmsegptr_t segp,ubyte bit_mask,PHYSFS_File *LoadFile)
+static void read_children(shared_segment &segp, const unsigned bit_mask, PHYSFS_File *const LoadFile)
 {
 	for (int bit=0; bit<MAX_SIDES_PER_SEGMENT; bit++) {
 		if (bit_mask & (1 << bit)) {
-			segp->children[bit] = PHYSFSX_readShort(LoadFile);
+			segp.children[bit] = PHYSFSX_readShort(LoadFile);
 		} else
-			segp->children[bit] = segment_none;
+			segp.children[bit] = segment_none;
 	}
 }
 
-static void read_verts(const vmsegptr_t segp,PHYSFS_File *LoadFile)
+static void read_verts(shared_segment &segp, PHYSFS_File *const LoadFile)
 {
 	// Read short Segments[segnum].verts[MAX_VERTICES_PER_SEGMENT]
-	range_for (auto &i, segp->verts)
+	range_for (auto &i, segp.verts)
 		i = PHYSFSX_readShort(LoadFile);
 }
 
-static void read_special(const vmsegptr_t segp,ubyte bit_mask,PHYSFS_File *LoadFile)
+static void read_special(shared_segment &segp, const unsigned bit_mask, PHYSFS_File *const LoadFile)
 {
 	if (bit_mask & (1 << MAX_SIDES_PER_SEGMENT)) {
 		// Read ubyte	Segments[segnum].special
-		segp->special = PHYSFSX_readByte(LoadFile);
+		segp.special = PHYSFSX_readByte(LoadFile);
 		// Read byte	Segments[segnum].matcen_num
-		segp->matcen_num = PHYSFSX_readByte(LoadFile);
+		segp.matcen_num = PHYSFSX_readByte(LoadFile);
 		// Read short	Segments[segnum].value
-		segp->station_idx = PHYSFSX_readShort(LoadFile);
+		segp.station_idx = PHYSFSX_readShort(LoadFile);
 	} else {
-		segp->special = 0;
-		segp->matcen_num = -1;
-		segp->station_idx = station_none;
+		segp.special = 0;
+		segp.matcen_num = -1;
+		segp.station_idx = station_none;
 	}
 }
 
@@ -897,23 +885,25 @@ int load_mine_data_compiled(PHYSFS_File *LoadFile)
 	compiled_version = PHYSFSX_readByte(LoadFile);
 	(void)compiled_version;
 
+	auto &Vertices = LevelSharedVertexState.get_vertices();
 	DXX_POISON_VAR(Vertices, 0xfc);
 	if (New_file_format_load)
-		Num_vertices = PHYSFSX_readShort(LoadFile);
+		LevelSharedVertexState.Num_vertices = PHYSFSX_readShort(LoadFile);
 	else
-		Num_vertices = PHYSFSX_readInt(LoadFile);
-	Assert( Num_vertices <= MAX_VERTICES );
+		LevelSharedVertexState.Num_vertices = PHYSFSX_readInt(LoadFile);
+	assert(LevelSharedVertexState.Num_vertices <= MAX_VERTICES);
 
 	DXX_POISON_VAR(Segments, 0xfc);
 	if (New_file_format_load)
-		Num_segments = PHYSFSX_readShort(LoadFile);
+		LevelSharedSegmentState.Num_segments = PHYSFSX_readShort(LoadFile);
 	else
-		Num_segments = PHYSFSX_readInt(LoadFile);
-	Assert( Num_segments <= MAX_SEGMENTS );
+		LevelSharedSegmentState.Num_segments = PHYSFSX_readInt(LoadFile);
+	assert(LevelSharedSegmentState.Num_segments <= MAX_SEGMENTS);
 
-	range_for (auto &i, partial_range(Vertices, Num_vertices))
+	range_for (auto &i, partial_range(Vertices, LevelSharedVertexState.Num_vertices))
 		PHYSFSX_readVector(LoadFile, i);
 
+	const auto Num_segments = LevelSharedSegmentState.Num_segments;
 	for (segnum_t segnum=0; segnum < Num_segments; segnum++ )	{
 		const auto segp = vmsegptr(segnum);
 
@@ -956,53 +946,55 @@ int load_mine_data_compiled(PHYSFS_File *LoadFile)
 		for (int sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++) {
 			ubyte byte_wallnum;
 
+			auto &sside = segp->shared_segment::sides[sidenum];
 			if (bit_mask & (1 << sidenum)) {
 				byte_wallnum = PHYSFSX_readByte(LoadFile);
 				if ( byte_wallnum == 255 )
-					segp->sides[sidenum].wall_num = wall_none;
+					sside.wall_num = wall_none;
 				else
-					segp->sides[sidenum].wall_num = byte_wallnum;
+					sside.wall_num = byte_wallnum;
 			} else
-					segp->sides[sidenum].wall_num = wall_none;
+					sside.wall_num = wall_none;
 		}
 
 		for (int sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++ ) {
-			if (segp->children[sidenum] == segment_none || segp->sides[sidenum].wall_num != wall_none)	{
+			auto &uside = segp->unique_segment::sides[sidenum];
+			if (segp->children[sidenum] == segment_none || segp->shared_segment::sides[sidenum].wall_num != wall_none)	{
 				// Read short Segments[segnum].sides[sidenum].tmap_num;
 				temp_ushort = PHYSFSX_readShort(LoadFile);
 #if defined(DXX_BUILD_DESCENT_I)
-				segp->sides[sidenum].tmap_num = convert_tmap(temp_ushort & 0x7fff);
+				uside.tmap_num = convert_tmap(temp_ushort & 0x7fff);
 
 				if (New_file_format_load && !(temp_ushort & 0x8000))
-					segp->sides[sidenum].tmap_num2 = 0;
+					uside.tmap_num2 = 0;
 				else {
 					// Read short Segments[segnum].sides[sidenum].tmap_num2;
-					segp->sides[sidenum].tmap_num2 = PHYSFSX_readShort(LoadFile);
-					segp->sides[sidenum].tmap_num2 =
-						(convert_tmap(segp->sides[sidenum].tmap_num2 & 0x3fff)) |
-						(segp->sides[sidenum].tmap_num2 & 0xc000);
+					uside.tmap_num2 = PHYSFSX_readShort(LoadFile);
+					uside.tmap_num2 =
+						(convert_tmap(uside.tmap_num2 & 0x3fff)) |
+						(uside.tmap_num2 & 0xc000);
 				}
 #elif defined(DXX_BUILD_DESCENT_II)
 				if (New_file_format_load) {
-					segp->sides[sidenum].tmap_num = temp_ushort & 0x7fff;
+					uside.tmap_num = temp_ushort & 0x7fff;
 				} else
-					segp->sides[sidenum].tmap_num = temp_ushort;
+					uside.tmap_num = temp_ushort;
 
 				if (Gamesave_current_version <= 1)
-					segp->sides[sidenum].tmap_num = convert_d1_tmap_num(segp->sides[sidenum].tmap_num);
+					uside.tmap_num = convert_d1_tmap_num(uside.tmap_num);
 
 				if (New_file_format_load && !(temp_ushort & 0x8000))
-					segp->sides[sidenum].tmap_num2 = 0;
+					uside.tmap_num2 = 0;
 				else {
 					// Read short Segments[segnum].sides[sidenum].tmap_num2;
-					segp->sides[sidenum].tmap_num2 = PHYSFSX_readShort(LoadFile);
-					if (Gamesave_current_version <= 1 && segp->sides[sidenum].tmap_num2 != 0)
-						segp->sides[sidenum].tmap_num2 = convert_d1_tmap_num(segp->sides[sidenum].tmap_num2);
+					uside.tmap_num2 = PHYSFSX_readShort(LoadFile);
+					if (Gamesave_current_version <= 1 && uside.tmap_num2 != 0)
+						uside.tmap_num2 = convert_d1_tmap_num(uside.tmap_num2);
 				}
 #endif
 
 				// Read uvl Segments[segnum].sides[sidenum].uvls[4] (u,v>>5, write as short, l>>1 write as short)
-				range_for (auto &i, segp->sides[sidenum].uvls) {
+				range_for (auto &i, uside.uvls) {
 					temp_short = PHYSFSX_readShort(LoadFile);
 					i.u = static_cast<fix>(temp_short) << 5;
 					temp_short = PHYSFSX_readShort(LoadFile);
@@ -1012,26 +1004,26 @@ int load_mine_data_compiled(PHYSFS_File *LoadFile)
 					//PHYSFS_read( LoadFile, &i.l, sizeof(fix), 1 );
 				}
 			} else {
-				segp->sides[sidenum].tmap_num = 0;
-				segp->sides[sidenum].tmap_num2 = 0;
-				segp->sides[sidenum].uvls = {};
+				uside.tmap_num = 0;
+				uside.tmap_num2 = 0;
+				uside.uvls = {};
 			}
 		}
 	}
 
-	Vertices.set_count(Num_vertices);
+	Vertices.set_count(LevelSharedVertexState.Num_vertices);
 	Segments.set_count(Num_segments);
 
-	validate_segment_all();			// Fill in side type and normals.
+	validate_segment_all(LevelSharedSegmentState);			// Fill in side type and normals.
 
 	range_for (const auto &&pi, vmsegptridx)
 	{
 		if (Gamesave_current_version > 5)
-			segment2_read(pi, LoadFile);
+			segment2_read(pi, pi, LoadFile);
 		fuelcen_activate(pi);
 	}
 
-	reset_objects(ObjectState, 1);		//one object, the player
+	reset_objects(LevelUniqueObjectState, 1);		//one object, the player
 
 	return 0;
 }

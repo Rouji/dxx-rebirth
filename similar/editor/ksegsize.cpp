@@ -48,6 +48,8 @@ static void validate_modified_segments(void)
 {
 	int	v0;
 	visited_segment_bitarray_t modified_segments;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	for (int v=0; v<Modified_vertex_index; v++) {
 		v0 = Modified_vertices[v];
 
@@ -61,7 +63,7 @@ static void validate_modified_segments(void)
 					if (w == v0)
 					{
 						modified_segments[segp] = true;
-						validate_segment(segp);
+						validate_segment(vcvertptr, segp);
 						for (unsigned s=0; s<MAX_SIDES_PER_SEGMENT; s++) {
 							Num_tilings = 1;
 							assign_default_uvs_to_side(segp, s);
@@ -77,6 +79,8 @@ static void validate_modified_segments(void)
 //	Scale vertex *vertp by vector *vp, scaled by scale factor scale_factor
 static void scale_vert_aux(const unsigned vertex_ind, const vms_vector &vp, const fix scale_factor)
 {
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vmvertptr = Vertices.vmptr;
 	auto &vertp = *vmvertptr(vertex_ind);
 
 	vertp.x += fixmul(vp.x,scale_factor)/2;
@@ -88,8 +92,9 @@ static void scale_vert_aux(const unsigned vertex_ind, const vms_vector &vp, cons
 }
 
 // ------------------------------------------------------------------------------------------
-static void scale_vert(const vmsegptr_t sp, int vertex_ind, const vms_vector &vp, fix scale_factor)
+static void scale_vert(const shared_segment &sp, const unsigned vertex_ind, const vms_vector &vp, const fix scale_factor)
 {
+	auto &verts = sp.verts;
 	switch (SegSizeMode) {
 		case SEGSIZEMODE_FREE:
 			if (is_free_vertex(vertex_ind))
@@ -100,18 +105,18 @@ static void scale_vert(const vmsegptr_t sp, int vertex_ind, const vms_vector &vp
 			break;
 		case SEGSIZEMODE_CURSIDE: {
 			range_for (const auto v, Side_to_verts[Curside])
-				if (sp->verts[v] == vertex_ind)
+				if (verts[v] == vertex_ind)
 					scale_vert_aux(vertex_ind, vp, scale_factor);
 			break;
 		}
 		case SEGSIZEMODE_EDGE: {
 			for (int v=0; v<2; v++)
-				if (sp->verts[Side_to_verts[Curside][(Curedge+v)%4]] == vertex_ind)
+				if (verts[Side_to_verts[Curside][(Curedge+v)%4]] == vertex_ind)
 					scale_vert_aux(vertex_ind, vp, scale_factor);
 			break;
 		}
 		case SEGSIZEMODE_VERTEX:
-			if (sp->verts[Side_to_verts[Curside][Curvert]] == vertex_ind)
+			if (verts[Side_to_verts[Curside][Curvert]] == vertex_ind)
 				scale_vert_aux(vertex_ind, vp, scale_factor);
 			break;
 		default:
@@ -142,7 +147,7 @@ static void med_scale_segment_new(const vmsegptr_t sp, int dimension, fix amount
 
 	Modified_vertex_index = 0;
 
-	med_extract_matrix_from_segment(sp, &mat);
+	med_extract_matrix_from_segment(sp, mat);
 
 	const vms_vector *vec;
 	unsigned side0, side1;
@@ -178,6 +183,8 @@ static void extract_vector_from_segment_side(const vmsegptr_t sp, const unsigned
 {
 	auto &sv = Side_to_verts[side];
 	auto &verts = sp->verts;
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
 	const auto v1 = vm_vec_sub(vcvertptr(verts[sv[vra]]), vcvertptr(verts[sv[vla]]));
 	const auto v2 = vm_vec_sub(vcvertptr(verts[sv[vrb]]), vcvertptr(verts[sv[vlb]]));
 	vm_vec_add(vp, v1, v2);
@@ -215,7 +222,9 @@ static int segsize_common(int dimension, fix amount)
 
 	med_extract_up_vector_from_segment_side(Cursegp, Curside, uvec);
 	med_extract_right_vector_from_segment_side(Cursegp, Curside, rvec);
-	extract_forward_vector_from_segment(Cursegp, fvec);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	extract_forward_vector_from_segment(vcvertptr, Cursegp, fvec);
 
 	scalevec.x = vm_vec_mag(rvec);
 	scalevec.y = vm_vec_mag(uvec);
@@ -377,9 +386,11 @@ static int	PerturbCursideCommon(fix amount)
 
 	Modified_vertex_index = 0;
 
-	extract_forward_vector_from_segment(Cursegp, fvec);
-	extract_right_vector_from_segment(Cursegp, rvec);
-	extract_up_vector_from_segment(Cursegp, uvec);
+	auto &Vertices = LevelSharedVertexState.get_vertices();
+	auto &vcvertptr = Vertices.vcptr;
+	extract_forward_vector_from_segment(vcvertptr, Cursegp, fvec);
+	extract_right_vector_from_segment(vcvertptr, Cursegp, rvec);
+	extract_up_vector_from_segment(vcvertptr, Cursegp, uvec);
 
 	fmag = vm_vec_mag(fvec);
 	rmag = vm_vec_mag(rvec);

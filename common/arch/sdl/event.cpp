@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -27,6 +27,10 @@
 
 namespace dcx {
 
+#if SDL_MAJOR_VERSION == 2
+extern SDL_Window *g_pRebirthSDLMainWindow;
+#endif
+
 window_event_result event_poll()
 {
 	SDL_Event event;
@@ -42,8 +46,10 @@ window_event_result event_poll()
 			case SDL_KEYDOWN:
 			case SDL_KEYUP:
 				if (clean_uniframe)
+				{
+					clean_uniframe=0;
 					unicode_frame_buffer = {};
-				clean_uniframe=0;
+				}
 				highest_result = std::max(key_handler(&event.key), highest_result);
 				break;
 			case SDL_MOUSEBUTTONDOWN:
@@ -190,7 +196,13 @@ window_event_result event_process(void)
 template <bool activate_focus>
 static void event_change_focus()
 {
-	SDL_WM_GrabInput(activate_focus && CGameCfg.Grabinput && likely(!CGameArg.DbgForbidConsoleGrab) ? SDL_GRAB_ON : SDL_GRAB_OFF);
+	const auto enable_grab = activate_focus && CGameCfg.Grabinput && likely(!CGameArg.DbgForbidConsoleGrab);
+#if SDL_MAJOR_VERSION == 1
+	SDL_WM_GrabInput(enable_grab ? SDL_GRAB_ON : SDL_GRAB_OFF);
+#elif SDL_MAJOR_VERSION == 2
+	SDL_SetWindowGrab(g_pRebirthSDLMainWindow, enable_grab ? SDL_TRUE : SDL_FALSE);
+	SDL_SetRelativeMouseMode(enable_grab ? SDL_TRUE : SDL_FALSE);
+#endif
 	if (activate_focus)
 		mouse_disable_cursor();
 	else

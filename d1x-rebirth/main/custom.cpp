@@ -1,5 +1,5 @@
 /*
- * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * This file is part of the DXX-Rebirth project <https://www.dxx-rebirth.com/>.
  * It is copyright by its individual contributors, as recorded in the
  * project's Git history.  See COPYING.txt at the top level for license
  * terms and a link to the Git history.
@@ -452,6 +452,7 @@ namespace dsx {
 
 static void load_hxm(const d_fname &hxmname)
 {
+	auto &Robot_joints = LevelSharedRobotJointState.Robot_joints;
 	unsigned int repl_num;
 	int i;
 	auto f = PHYSFSX_openReadBuffered(hxmname);
@@ -475,6 +476,7 @@ static void load_hxm(const d_fname &hxmname)
 	// read robot info
 	if ((n_items = PHYSFSX_readInt(f)) != 0)
 	{
+		auto &Robot_info = LevelSharedRobotInfoState.Robot_info;
 		for (i = 0; i < n_items; i++)
 		{
 			repl_num = PHYSFSX_readInt(f);
@@ -524,6 +526,7 @@ static void load_hxm(const d_fname &hxmname)
 			}
 			else
 			{
+				auto &Polygon_models = LevelSharedPolygonModelState.Polygon_models;
 				pm = &Polygon_models[repl_num];
 				polymodel_read(pm, f);
 				pm->model_data = make_unique<ubyte[]>(pm->model_data_size);
